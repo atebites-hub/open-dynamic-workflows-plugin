@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "open-dynamic-workflows": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "${ZCODE_PLUGIN_ROOT}/dist/mcp/server.js"
+      ],
+      "env": {
+        "ODW_DEFAULT_EXECUTOR": "${user_config.executor}"
+      },
+      "enabled": true,
+      "timeoutMs": 30000
+    }
+  }
+}

@@ -1,0 +1,16 @@
+node_modules/
+*.log
+.DS_Store
+
+# ODW + zcode-cli build artifacts (rebuilt by scripts/build.mjs from the submodules)
+# ODW + zcode-cli 的构建产物（由 scripts/build.mjs 从 submodule 重建）
+open-dynamic-workflows/dist/
+open-dynamic-workflows/node_modules/
+zcode-cli/vendor/
+zcode-cli/bin/zcode.js
+zcode-cli/packages/zcode-tui/dist/
+zcode-cli/node_modules/
+
+# Editor / OS
+.idea/
+.vscode/

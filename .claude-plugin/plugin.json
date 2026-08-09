@@ -1,0 +1,29 @@
+{
+  "name": "open-dynamic-workflows",
+  "description": "Dynamic workflow orchestration for ZCode — fan a deterministic script out across many zcode subagents. Provides a `workflow` tool, an authoring skill, and a `/workflows` command. A faithful, model-agnostic reimplementation of Claude Code's Workflow runtime.",
+  "description_i18n": {
+    "en": "Dynamic workflow orchestration for ZCode — fan a deterministic script out across many zcode subagents. Provides a `workflow` tool, an authoring skill, and a `/workflows` command. A faithful, model-agnostic reimplementation of Claude Code's Workflow runtime.",
+    "zh-CN": "面向 ZCode 的动态工作流编排——把一段确定性脚本扇出成大量 zcode 子 agent。提供 `workflow` 工具、编写 skill 和 `/workflows` 命令。Claude Code Workflow 运行时的忠实、模型无关的复刻。"
+  },
+  "version": "0.1.0",
+  "author": {
+    "name": "Open Dynamic Workflows",
+    "url": "https://github.com/atebites-hub/open-dynamic-workflows-plugin"
+  },
+  "keywords": [
+    "workflow",
+    "orchestration",
+    "subagent",
+    "fan-out",
+    "parallel",
+    "dynamic-workflows"
+  ],
+  "userConfig": {
+    "executor": {
+      "title": "Default worker executor",
+      "description": "The CLI executor each agent() in a workflow spawns. 'zcode' (default) uses the user's installed zcode. Workflows name executors per-node; this sets which are available.",
+      "type": "string",
+      "default": "zcode"
+    }
+  }
+}

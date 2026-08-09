@@ -1,0 +1,7 @@
+[submodule "open-dynamic-workflows"]
+	path = open-dynamic-workflows
+	url = https://github.com/atebites-hub/open-dynamic-workflows.git
+	branch = feat/zcode-executor
+[submodule "zcode-cli"]
+	path = zcode-cli
+	url = https://github.com/atebites-hub/zcode-cli.git
