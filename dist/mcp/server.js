@@ -7011,6 +7011,67 @@ function assertObjectRootSchema(schema) {
     throw new Error(`structured-output schema root must be type:"object" (got ${JSON.stringify(schema["type"])}); discriminated unions must be expressed flat (enum discriminant + optional fields), not a root oneOf`);
   }
 }
+var DOC_KEYWORDS = /* @__PURE__ */ new Set(["description", "title", "examples", "$comment", "default"]);
+function compactSchema(schema) {
+  return compactValue(schema);
+}
+function compactValue(value) {
+  if (Array.isArray(value)) {
+    return value.map(compactValue);
+  }
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+  const obj = value;
+  const out = {};
+  for (const [key, child] of Object.entries(obj)) {
+    if (DOC_KEYWORDS.has(key))
+      continue;
+    out[key] = compactValue(child);
+  }
+  return out;
+}
+function compactSchemaToJson(schema, maxChars = 2e5) {
+  const json = JSON.stringify(compactSchema(schema));
+  if (json.length <= maxChars)
+    return json;
+  return json.slice(0, maxChars) + "\n\u2026(schema truncated: it exceeded the prompt/argv budget; follow the visible structure)";
+}
+
+// open-dynamic-workflows/dist/runtime/retry.js
+var DEFAULT_MAX_RETRIES = 2;
+var DEFAULT_RETRY_BACKOFF_MS = 1e3;
+var MAX_BACKOFF_MULTIPLE = 8;
+var RETRIABLE_SUBTYPES = /* @__PURE__ */ new Set(["error_during_execution"]);
+function isRetriable(res) {
+  return res.isError && RETRIABLE_SUBTYPES.has(res.resultSubtype);
+}
+function backoffDelayMs(attempt, baseMs = DEFAULT_RETRY_BACKOFF_MS) {
+  if (attempt <= 0)
+    return 0;
+  const multiple = Math.min(2 ** (attempt - 1), MAX_BACKOFF_MULTIPLE);
+  return baseMs * multiple;
+}
+function abortableSleep(ms, signal) {
+  if (ms <= 0)
+    return Promise.resolve();
+  if (signal?.aborted)
+    return Promise.reject(new AbortError("aborted"));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new AbortError("aborted"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+var AbortError = class extends Error {
+  name = "AbortError";
+};
 
 // open-dynamic-workflows/dist/runtime/hooks.js
 var AGENT_TYPE_PRESETS = {
@@ -7122,7 +7183,13 @@ function createHooks(ctx, deps) {
       if (executor === void 0) {
         throw new Error(`unknown executor "${o.executor}" (registered: ${Object.keys(ctx.executors).join(", ")})`);
       }
-      const res = await executor(execOpts);
+      const maxRetries = o.retries ?? ctx.maxRetries ?? DEFAULT_MAX_RETRIES;
+      const backoffMs = ctx.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS;
+      let res = await executor(execOpts);
+      for (let attempt = 1; isRetriable(res) && attempt <= maxRetries; attempt++) {
+        await abortableSleep(backoffDelayMs(attempt, backoffMs), ctx.abort);
+        res = await executor(execOpts);
+      }
       ctx.addTokens(res.usage.outputTokens);
       let value;
       if (o.schema !== void 0) {
@@ -7359,7 +7426,9 @@ async function runWorkflow(options) {
       },
       registryDir,
       ...options.model !== void 0 ? { defaultModel: options.model } : {},
-      ...options.agentTimeoutMs !== void 0 ? { agentTimeoutMs: options.agentTimeoutMs } : {}
+      ...options.agentTimeoutMs !== void 0 ? { agentTimeoutMs: options.agentTimeoutMs } : {},
+      ...options.maxRetries !== void 0 ? { maxRetries: options.maxRetries } : {},
+      ...options.retryBackoffMs !== void 0 ? { retryBackoffMs: options.retryBackoffMs } : {}
     };
     const runNested = async (ref, a) => {
       if (depth >= 1) {
@@ -7415,14 +7484,15 @@ async function runWorkflow(options) {
   const durationMs = Date.now() - startedAt;
   failedAgents = admissionFailures + events.filter((event) => event.type === "agent_end" && !event.ok).length;
   failedWorkflows = events.filter((event) => event.type === "workflow_end" && !event.ok).length;
-  ok2 = failedAgents === 0 && failedWorkflows === 0;
   emit({
     type: "run_end",
     runId: journal.runId,
     ok: ok2,
     tokensSpent,
     durationMs,
-    ts: now()
+    ts: now(),
+    failedAgents,
+    failedWorkflows
   });
   const journalResult = await journal.close();
   durable = journalResult.durable;
@@ -7616,6 +7686,7 @@ function makeSubprocessExecutor(spec) {
         const events = [];
         let stdoutBuf = "";
         let stderrBuf = "";
+        let sawStdout = false;
         const onAbort = () => {
           if (settled)
             return;
@@ -7646,7 +7717,7 @@ function makeSubprocessExecutor(spec) {
             return;
           if (idleTimer)
             clearTimeout(idleTimer);
-          idleTimer = setTimeout(() => fail2(`${spec.command} idle timeout`), opts.idleTimeoutMs);
+          idleTimer = setTimeout(() => fail2(`${spec.command} idle timeout` + (sawStdout ? "" : " (no stdout received \u2014 for single-envelope executors like zcode, idleTimeoutMs is stream-based and ineffective; use the wall timeout)")), opts.idleTimeoutMs);
         };
         armIdle();
         const consume = (chunk) => {
@@ -7662,6 +7733,7 @@ function makeSubprocessExecutor(spec) {
         };
         child.stdout.setEncoding("utf8");
         child.stdout.on("data", (chunk) => {
+          sawStdout = true;
           armIdle();
           consume(chunk);
         });
@@ -7798,6 +7870,40 @@ import { unlink, writeFile as writeFile3 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+// open-dynamic-workflows/dist/schema/extract-json.js
+function extractJsonObject(text) {
+  const start = text.indexOf("{");
+  if (start === -1)
+    return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === "{") {
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        return text.slice(start, i + 1);
+      }
+    }
+  }
+  return text.slice(start);
+}
+
 // open-dynamic-workflows/dist/executor/codex/codex-jsonl.js
 function parseCodexJsonLine(line) {
   const trimmed = line.trim();
@@ -7876,8 +7982,9 @@ function reduceCodexEvents(events, opts) {
   const exitCode = opts?.exitCode;
   let isError = !sawCompleted || sawTurnFailed || exitCode != null && exitCode !== 0;
   if (opts?.schema) {
+    const candidate = extractJsonObject(outcome.text) ?? outcome.text;
     try {
-      outcome.structuredOutput = JSON.parse(outcome.text);
+      outcome.structuredOutput = JSON.parse(candidate);
     } catch {
       isError = true;
     }
@@ -7994,21 +8101,22 @@ function reduceZcodeEnvelope(events, opts) {
     };
   }
   const isError = envelope.exitCode !== 0;
+  const total = toFiniteNumber3(envelope.totalTokens);
+  const outputTokens = envelope.outputTokens !== null && Number.isFinite(envelope.outputTokens) ? envelope.outputTokens : total;
+  const inputTokens = envelope.inputTokens !== null && Number.isFinite(envelope.inputTokens) ? envelope.inputTokens : total;
   const outcome = {
     text: envelope.text,
     sessionId: envelope.sessionId,
     costUsd: toFiniteNumber3(envelope.costUsd),
     resultSubtype: isError ? "error_during_execution" : "success",
     isError,
-    usage: {
-      inputTokens: toFiniteNumber3(envelope.inputTokens),
-      outputTokens: toFiniteNumber3(envelope.outputTokens)
-    },
+    usage: { inputTokens, outputTokens },
     telemetryAvailable: envelope.telemetryAvailable === true
   };
   if (opts?.schema) {
+    const candidate = extractJsonObject(outcome.text) ?? outcome.text;
     try {
-      outcome.structuredOutput = JSON.parse(outcome.text);
+      outcome.structuredOutput = JSON.parse(candidate);
     } catch {
       outcome.isError = true;
       outcome.resultSubtype = "error_during_execution";
@@ -8026,7 +8134,7 @@ function composePrompt(opts) {
   }
   if (opts.schema !== void 0) {
     parts.push(`Respond with ONLY valid JSON (no prose, no code fences) matching this JSON Schema:
-${JSON.stringify(opts.schema)}`);
+${compactSchemaToJson(opts.schema)}`);
   }
   parts.push(opts.prompt);
   return parts.join("\n\n");
