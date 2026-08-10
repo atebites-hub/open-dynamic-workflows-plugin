@@ -14,7 +14,7 @@ Inspect the workflow runs in this project. Each workflow keeps its runs under `.
    - a `run_end` event with `"ok": false` → completed with failures
    - no `run_end` event → interrupted/aborted (resumable)
 3. Present a compact summary to the user: workflow name, runId (short), status, agent count, tokens, duration. Answer in the user's language.
-4. If the user asks to **resume** a run, they can re-run it with the run's `resumeFromRunId` by invoking the `workflow` tool with `{ scriptPath: ".odw/<name>/script.js", resumeFromRunId: "<runId>" }`. Completed agents replay from the journal with zero token spend.
+4. If the user asks to **resume** a run, they can re-run it with the run's `resumeFromRunId` by invoking the `workflow` tool with `{ cwd: "<absolute project path>", scriptPath: ".odw/<name>/script.js", resumeFromRunId: "<runId>" }`. Completed agents replay from the journal with zero token spend.
 
 ## Notes
 

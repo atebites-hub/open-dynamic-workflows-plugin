@@ -1,0 +1,24 @@
+{
+  "name": "open-dynamic-workflows",
+  "version": "0.2.0",
+  "description": "Run deterministic JavaScript workflows across Codex or ZCode subagents.",
+  "author": {
+    "name": "Open Dynamic Workflows",
+    "url": "https://github.com/atebites-hub/open-dynamic-workflows-plugin"
+  },
+  "homepage": "https://github.com/atebites-hub/open-dynamic-workflows-plugin",
+  "repository": "https://github.com/atebites-hub/open-dynamic-workflows-plugin",
+  "license": "MIT",
+  "keywords": ["workflow", "orchestration", "subagent", "codex"],
+  "skills": "./skills/",
+  "mcpServers": "./.codex-mcp.json",
+  "interface": {
+    "displayName": "Open Dynamic Workflows",
+    "shortDescription": "Run deterministic multi-agent workflows",
+    "developerName": "Open Dynamic Workflows",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "websiteURL": "https://github.com/atebites-hub/open-dynamic-workflows-plugin",
+    "defaultPrompt": ["Use Open Dynamic Workflows for this large multi-agent task."]
+  }
+}

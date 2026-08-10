@@ -12,8 +12,9 @@
 // 在 `node scripts/build.mjs`（或 `npm run setup`）之后运行。
 
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { delimiter, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 
 const root = resolve(import.meta.dirname, "..");
@@ -26,9 +27,29 @@ if (!existsSync(serverPath)) {
 
 // The smoke test runs in an empty cwd so a workflow can't clobber the plugin source.
 // 冒烟测试在一个空 cwd 下运行，这样 workflow 不会误伤插件源码。
-const { mkdtempSync } = await import("node:fs");
 const { tmpdir } = await import("node:os");
 const scratch = mkdtempSync(resolve(tmpdir(), "odw-smoke-"));
+const workflowCwd = mkdtempSync(resolve(tmpdir(), "odw-workflow-"));
+const fakeBin = mkdtempSync(resolve(tmpdir(), "odw-bin-"));
+const fakeCodex = resolve(fakeBin, "codex");
+const sandboxMeta = {
+  "codex/sandbox-state-meta": { sandboxCwd: pathToFileURL(workflowCwd).href },
+};
+writeFileSync(
+  fakeCodex,
+  `#!/usr/bin/env node
+let prompt = ""
+process.stdin.on("data", chunk => { prompt += chunk })
+process.stdin.resume()
+process.stdin.on("end", () => {
+  if (prompt.includes("WAIT_FOR_CANCEL")) return setInterval(() => {}, 1000)
+  console.log(JSON.stringify({ type: "thread.started", thread_id: "fake-thread" }))
+  console.log(JSON.stringify({ type: "item.completed", item: { id: "fake-item", type: "agent_message", text: "ODW_FAKE_CODEX_OK" } }))
+  console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 3, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } }))
+})
+`,
+);
+chmodSync(fakeCodex, 0o755);
 
 let passed = 0;
 let failed = 0;
@@ -43,6 +64,33 @@ function expect(name, fn) {
     console.error(`  ✗ ${name}: ${err.message}`);
   }
 }
+
+const codexManifest = JSON.parse(
+  readFileSync(resolve(root, ".codex-plugin", "plugin.json"), "utf8"),
+);
+const codexMcp = JSON.parse(readFileSync(resolve(root, ".codex-mcp.json"), "utf8"));
+const codexMarketplace = JSON.parse(
+  readFileSync(resolve(root, ".agents", "plugins", "marketplace.json"), "utf8"),
+);
+
+expect("Codex manifest registers the skill and MCP server", () => {
+  assert.equal(codexManifest.name, "open-dynamic-workflows");
+  assert.equal(codexManifest.skills, "./skills/");
+  assert.equal(codexManifest.mcpServers, "./.codex-mcp.json");
+});
+expect("Codex MCP command is plugin-relative", () => {
+  const server = codexMcp.mcpServers["open-dynamic-workflows"];
+  assert.equal(server.command, "node");
+  assert.deepEqual(server.args, ["./dist/mcp/server.js"]);
+  assert.equal(server.cwd, ".");
+  assert.equal(server.env.ODW_REQUIRE_CWD, "1");
+  assert.equal(server.tool_timeout_sec, 28800);
+});
+expect("Codex marketplace exposes this repository as the plugin", () => {
+  const plugin = codexMarketplace.plugins[0];
+  assert.equal(plugin.name, "open-dynamic-workflows");
+  assert.deepEqual(plugin.source, { source: "local", path: "./" });
+});
 
 // Send one JSON-RPC line per request, collect the framed responses. The server speaks
 // Content-Length framing, but for a smoke test we read its stdout as a stream of framed
@@ -76,7 +124,12 @@ function readFramed(buf) {
 
 const proc = spawn(process.execPath, [serverPath], {
   cwd: scratch,
-  env: { ...process.env, ZCODE_PROJECT_DIR: scratch },
+  env: {
+    ...process.env,
+    ODW_REQUIRE_CWD: "1",
+    PATH: `${fakeBin}${delimiter}${process.env.PATH ?? ""}`,
+    ZCODE_PROJECT_DIR: scratch,
+  },
   stdio: ["pipe", "pipe", "pipe"],
 });
 
@@ -115,6 +168,9 @@ try {
   expect("initialize returns serverInfo.name", () =>
     assert.equal(init.result.serverInfo.name, "open-dynamic-workflows"),
   );
+  expect("initialize requests Codex sandbox metadata", () =>
+    assert.deepEqual(init.result.capabilities.experimental["codex/sandbox-state-meta"], {}),
+  );
 
   console.log("\n[smoke] tools/list…");
   framedWrite(proc, { jsonrpc: "2.0", id: 2, method: "tools/list" });
@@ -123,10 +179,11 @@ try {
     assert.equal(list.result.tools.length, 1);
     assert.equal(list.result.tools[0].name, "workflow");
   });
-  expect("workflow tool description mentions agent()/executor/meta", () => {
+  expect("workflow tool description mentions both bundled executors", () => {
     const d = list.result.tools[0].description;
     assert.ok(d.includes("agent("));
-    assert.ok(d.includes("executor"));
+    assert.ok(d.includes("executor:'codex'"));
+    assert.ok(d.includes("executor:'zcode'"));
     assert.ok(d.includes("meta"));
   });
 
@@ -137,7 +194,9 @@ try {
     method: "tools/call",
     params: {
       name: "workflow",
+      _meta: sandboxMeta,
       arguments: {
+        cwd: workflowCwd,
         script:
           "export const meta = { name: 'smoke', description: 'trivial' }\nreturn { ok: true, n: 42 }\n",
       },
@@ -150,17 +209,159 @@ try {
     assert.deepEqual(parsed.value, { ok: true, n: 42 });
     assert.equal(parsed.ok, true);
     assert.equal(parsed.agentCount, 0);
+    assert.ok(existsSync(resolve(workflowCwd, ".odw", "smoke", "runs", parsed.runId)));
+  });
+
+  console.log("\n[smoke] tools/call workflow (Codex leaf through bundled executor)…");
+  framedWrite(proc, {
+    jsonrpc: "2.0",
+    id: 4,
+    method: "tools/call",
+    params: {
+      name: "workflow",
+      _meta: sandboxMeta,
+      arguments: {
+        cwd: workflowCwd,
+        script:
+          "export const meta = { name: 'codex-leaf', description: 'one fake Codex leaf' }\n" +
+          "return await agent('Reply with OK only.', { executor: 'codex', label: 'codex' })\n",
+      },
+    },
+  });
+  const codexCall = await waitForMessage((m) => m.id === 4, 30000);
+  expect("Codex leaf executes through the bundled registry", () => {
+    const parsed = JSON.parse(codexCall.result.content[0].text);
+    assert.equal(codexCall.result.isError, false);
+    assert.equal(parsed.value, "ODW_FAKE_CODEX_OK");
+    assert.equal(parsed.agentCount, 1);
+    assert.equal(parsed.failedAgents, 0);
   });
 
   console.log("\n[smoke] tools/call workflow (missing script + scriptPath → isError)");
   framedWrite(proc, {
     jsonrpc: "2.0",
-    id: 4,
+    id: 5,
     method: "tools/call",
-    params: { name: "workflow", arguments: {} },
+    params: { name: "workflow", _meta: sandboxMeta, arguments: {} },
   });
-  const errCall = await waitForMessage((m) => m.id === 4);
+  const errCall = await waitForMessage((m) => m.id === 5);
   expect("missing-script returns isError", () => assert.equal(errCall.result.isError, true));
+
+  console.log("\n[smoke] tools/call workflow (Codex mode without cwd → isError)");
+  framedWrite(proc, {
+    jsonrpc: "2.0",
+    id: 6,
+    method: "tools/call",
+    params: {
+      name: "workflow",
+      _meta: sandboxMeta,
+      arguments: {
+        script: "export const meta = { name: 'bad-cwd', description: 'trivial' }\nreturn true\n",
+      },
+    },
+  });
+  const cwdCall = await waitForMessage((m) => m.id === 6);
+  expect("Codex mode requires an explicit cwd", () => {
+    assert.equal(cwdCall.result.isError, true);
+    assert.match(cwdCall.result.content[0].text, /require an absolute `cwd`/);
+  });
+
+  console.log("\n[smoke] tools/call workflow (non-string cwd → isError)");
+  framedWrite(proc, {
+    jsonrpc: "2.0",
+    id: 7,
+    method: "tools/call",
+    params: {
+      name: "workflow",
+      _meta: sandboxMeta,
+      arguments: {
+        cwd: 42,
+        script: "export const meta = { name: 'bad-cwd-type', description: 'trivial' }\nreturn true\n",
+      },
+    },
+  });
+  const cwdTypeCall = await waitForMessage((m) => m.id === 7);
+  expect("non-string cwd returns an MCP tool error", () => {
+    assert.equal(cwdTypeCall.result.isError, true);
+    assert.match(cwdTypeCall.result.content[0].text, /must be an absolute project path/);
+  });
+
+  console.log("\n[smoke] notifications/cancelled aborts an active Codex leaf");
+  framedWrite(proc, {
+    jsonrpc: "2.0",
+    id: 8,
+    method: "tools/call",
+    params: {
+      name: "workflow",
+      _meta: sandboxMeta,
+      arguments: {
+        cwd: workflowCwd,
+        script:
+          "export const meta = { name: 'cancel', description: 'cancel one leaf' }\n" +
+          "return await agent('WAIT_FOR_CANCEL', { executor: 'codex', label: 'cancel' })\n",
+      },
+    },
+  });
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+  framedWrite(proc, {
+    jsonrpc: "2.0",
+    method: "notifications/cancelled",
+    params: { requestId: 8, reason: "smoke cancellation" },
+  });
+  const cancelledCall = await waitForMessage((m) => m.id === 8, 5000);
+  expect("cancelled workflow returns an actionable tool error", () => {
+    assert.equal(cancelledCall.result.isError, true);
+    assert.match(cancelledCall.result.content[0].text, /aborted/);
+  });
+
+  console.log("\n[smoke] tools/call rejects cwd outside the active Codex workspace");
+  framedWrite(proc, {
+    jsonrpc: "2.0",
+    id: 9,
+    method: "tools/call",
+    params: {
+      name: "workflow",
+      _meta: sandboxMeta,
+      arguments: {
+        cwd: scratch,
+        script: "export const meta = { name: 'outside', description: 'trivial' }\nreturn true\n",
+      },
+    },
+  });
+  const outsideCall = await waitForMessage((m) => m.id === 9);
+  expect("outside-workspace cwd returns an MCP tool error", () => {
+    assert.equal(outsideCall.result.isError, true);
+    assert.match(outsideCall.result.content[0].text, /must match the active Codex workspace/);
+  });
+
+  console.log("\n[smoke] tools/call rejects missing trusted Codex metadata");
+  framedWrite(proc, {
+    jsonrpc: "2.0",
+    id: 10,
+    method: "tools/call",
+    params: {
+      name: "workflow",
+      arguments: {
+        cwd: workflowCwd,
+        script: "export const meta = { name: 'untrusted', description: 'trivial' }\nreturn true\n",
+      },
+    },
+  });
+  const untrustedCall = await waitForMessage((m) => m.id === 10);
+  expect("missing Codex sandbox metadata returns an MCP tool error", () => {
+    assert.equal(untrustedCall.result.isError, true);
+    assert.match(untrustedCall.result.content[0].text, /trusted workspace metadata/);
+  });
+
+  console.log("\n[smoke] malformed JSON-RPC input returns an error without killing the server");
+  framedWrite(proc, null);
+  const invalidRequest = await waitForMessage((m) => m.id === null && m.error?.code === -32600);
+  expect("non-object JSON-RPC input returns Invalid Request", () =>
+    assert.equal(invalidRequest.error.message, "Invalid Request"),
+  );
+  framedWrite(proc, { jsonrpc: "2.0", id: 11, method: "ping" });
+  const ping = await waitForMessage((m) => m.id === 11);
+  expect("server remains alive after malformed input", () => assert.deepEqual(ping.result, {}));
 } catch (err) {
   failed++;
   console.error(`[smoke] fatal: ${err.message}`);

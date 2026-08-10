@@ -6,8 +6,8 @@
 // stdio JSON-RPC), but the single tool it exposes runs the ODW runtime:
 // JSON-RPC），但它暴露的唯一工具运行 ODW 运行时：
 //
-//   workflow({ script, args?, scriptPath?, resumeFromRunId? })
-//     → runWorkflow({ ..., executors: { zcode: zcodeExecutor } })
+//   workflow({ cwd?, script, args?, scriptPath?, resumeFromRunId? })
+//     → runWorkflow({ ..., executors: { codex: codexExecutor, zcode: zcodeExecutor } })
 //     → { content:[{type:"text", text: JSON.stringify(result.value)}], isError: !result.ok }
 //
 // The tool's `description` is the authoring guide condensed — the model learns to
@@ -21,27 +21,23 @@
 // 由 scripts/build.mjs 经 esbuild 打包成单个自包含的 dist/mcp/server.js
 //（ODW + ajv 内联——运行时无需 node_modules，与所有其它 zcode 插件一致）。
 
-import { runWorkflow } from "../../open-dynamic-workflows/dist/index.js";
-import { zcodeExecutor } from "../../open-dynamic-workflows/dist/index.js";
+import {
+  codexExecutor,
+  runWorkflow,
+  zcodeExecutor,
+} from "../../open-dynamic-workflows/dist/index.js";
 import type { WorkflowResult } from "../../open-dynamic-workflows/dist/index.js";
+import { realpath } from "node:fs/promises";
+import { isAbsolute } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const SERVER_INFO = {
   name: "open-dynamic-workflows",
-  version: "0.1.0",
+  version: "0.2.0",
 };
 
-// The executor registry. v1 ships zcode-only (this is a zcode-native plugin). The
-// zcodeExecutor spawns the user's installed `zcode` by name with ZCODE_ODW_PROTOCOL=1.
-// Scripts that name a different executor fail with ODW's clear "unknown executor" error.
-// 执行器注册表。v1 仅提供 zcode（这是一个 zcode 原生插件）。zcodeExecutor 以
-// ZCODE_ODW_PROTOCOL=1 按名 spawn 用户安装的 `zcode`。脚本里指定别的执行器会以
-// ODW 清晰的 "unknown executor" 报错失败。
-function buildExecutors(): Record<string, (opts: any) => Promise<any>> {
-  // ODW_DEFAULT_EXECUTOR is injected from userConfig.executor via .mcp.json env.
-  // For v1 we always register zcode; this is the seam for future claude/codex support.
-  void process.env.ODW_DEFAULT_EXECUTOR; // referenced for documentation; v1 = zcode-only
-  return { zcode: zcodeExecutor };
-}
+const EXECUTORS = { codex: codexExecutor, zcode: zcodeExecutor };
+const SANDBOX_META_KEY = "codex/sandbox-state-meta";
 
 // The tool's `description` IS the authoring contract — the model reads it to learn how
 // to write a workflow script. Keep it aligned with skills/open-dynamic-workflows/SKILL.md.
@@ -50,7 +46,7 @@ function buildExecutors(): Record<string, (opts: any) => Promise<any>> {
 const WORKFLOW_TOOL = {
   name: "workflow",
   description: [
-    "Execute a dynamic workflow script that orchestrates multiple zcode subagents deterministically.",
+    "Execute a dynamic workflow script that orchestrates Codex or ZCode subagents deterministically.",
     "A dynamic workflow is plain JavaScript (NOT TypeScript) that orchestrates subagents at scale:",
     "the model writes the script, this tool runs it.",
     "",
@@ -65,8 +61,10 @@ const WORKFLOW_TOOL = {
     "  variables, spreads, or interpolation).",
     "- These globals are injected into scope: agent(prompt, {executor, ...}), parallel(thunks),",
     "  pipeline(items, ...stages), phase(title), log(message), args, workflow(ref, args?).",
-    "- Every agent() MUST name an executor: {executor:'zcode'}. There is no default; an unknown",
-    "  name fails the run. (zcode is the executor this plugin provides.)",
+    "- Every agent() MUST name an executor: {executor:'codex'} or {executor:'zcode'}. There is",
+    "  no default; an unknown name fails the run.",
+    "- Codex model overrides default reasoningEffort to 'medium'; set reasoningEffort explicitly",
+    "  only when the selected model supports the requested value.",
     "- agent(prompt, {schema}) returns a validated object (schema root must be type:'object').",
     "- pipeline() has NO barrier between stages (default for multi-stage); parallel() IS a barrier.",
     "- Determinism: Date.now/Math.random/argless new Date() throw (resume safety). Pass timestamps",
@@ -75,6 +73,8 @@ const WORKFLOW_TOOL = {
     "- A top-level `return <value>` is the workflow's result (JSON-serializable).",
     "",
     "PARAMETERS:",
+    "- cwd: absolute project directory for workflow artifacts and subagents. Codex callers MUST",
+    "  pass the active workspace path because the plugin server itself runs from its install dir.",
     "- script: the inline JS source (preferred). Pass the script inline — do NOT write it to a",
     "  file first.",
     "- scriptPath: path to a saved script file (alternative to script; use for re-runs).",
@@ -82,8 +82,9 @@ const WORKFLOW_TOOL = {
     "- resumeFromRunId: re-run a previous run; completed agent() calls replay from the journal with",
     "  ZERO token spend, the rest run live.",
     "",
-    "RESULT: the tool returns whatever the script `return`ed (its `value`), plus run metadata. On",
-    "failure (failedAgents > 0 or !ok), isError is true and the text carries the failure reason.",
+    "RESULT: the tool returns whatever the script `return`ed (its `value`), plus run metadata.",
+    "isError is true when !ok; swallowed leaf failures keep ok=true but appear in failedAgents",
+    "with a resume hint.",
     "",
     "Artifacts (script snapshot, journal, per-agent traces) land under .odw/<name>/runs/<runId>/.",
     "Consult the $open-dynamic-workflows skill for full authoring guidance and worked patterns.",
@@ -91,6 +92,12 @@ const WORKFLOW_TOOL = {
   inputSchema: {
     type: "object",
     properties: {
+      cwd: {
+        type: "string",
+        minLength: 1,
+        description:
+          "Absolute project directory used for workflow artifacts and subagents. Required from Codex callers.",
+      },
       script: {
         type: "string",
         description:
@@ -114,6 +121,7 @@ const WORKFLOW_TOOL = {
 };
 
 const TOOLS = [WORKFLOW_TOOL];
+const activeCalls = new Map<number | string, AbortController>();
 
 // ────────────────────────────────────────────────────────────────────────────
 // MCP JSON-RPC over stdio (Content-Length framing + bare-line fallback).
@@ -145,13 +153,18 @@ function fail(id: number | string | null, code: number, message: string): void {
 // 从工具调用参数运行一个 workflow。resolve 为 MCP 工具调用结果（{content, isError}）。
 // 绝不抛错——失败落到 isError + text，让模型可据此反应。进度流到 stderr（server 诊断），
 // 因为 v1 是同步的，只在完成时返回。
-async function runWorkflowTool(args: {
-  script?: string;
-  scriptPath?: string;
-  args?: unknown;
-  resumeFromRunId?: string;
-}): Promise<{ content: Array<{ type: "text"; text: string }>; isError: boolean }> {
-  const { script, scriptPath, args: workflowArgs, resumeFromRunId } = args;
+async function runWorkflowTool(
+  args: {
+    cwd?: unknown;
+    script?: unknown;
+    scriptPath?: unknown;
+    args?: unknown;
+    resumeFromRunId?: unknown;
+  },
+  signal?: AbortSignal,
+  sandboxCwd?: unknown,
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError: boolean }> {
+  const { cwd: requestedCwd, script, scriptPath, args: workflowArgs, resumeFromRunId } = args;
 
   if (!script && !scriptPath) {
     return {
@@ -165,11 +178,70 @@ async function runWorkflowTool(args: {
     };
   }
 
-  // The project dir is the workflow's cwd — agents spawn `zcode` here, so file-writing
-  // agents operate on the user's project. Falls back to process.cwd() if unset.
-  // 项目目录是 workflow 的 cwd——agent 在这里 spawn `zcode`，所以写文件的 agent 作用于
-  // 用户的项目。未设置时回退到 process.cwd()。
-  const cwd = process.env.ZCODE_PROJECT_DIR || process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  if (process.env.ODW_REQUIRE_CWD === "1" && requestedCwd === undefined) {
+    return {
+      content: [{ type: "text", text: "Codex workflow calls require an absolute `cwd`." }],
+      isError: true,
+    };
+  }
+
+  if (
+    requestedCwd !== undefined &&
+    (typeof requestedCwd !== "string" || !requestedCwd || !isAbsolute(requestedCwd))
+  ) {
+    return {
+      content: [{ type: "text", text: "workflow `cwd` must be an absolute project path." }],
+      isError: true,
+    };
+  }
+
+  if (
+    (script !== undefined && typeof script !== "string") ||
+    (scriptPath !== undefined && typeof scriptPath !== "string") ||
+    (resumeFromRunId !== undefined && typeof resumeFromRunId !== "string")
+  ) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: "workflow script, scriptPath, and resumeFromRunId must be strings.",
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  if (process.env.ODW_REQUIRE_CWD === "1") {
+    if (typeof sandboxCwd !== "string") {
+      return {
+        content: [{ type: "text", text: "Codex did not provide trusted workspace metadata." }],
+        isError: true,
+      };
+    }
+    try {
+      const [requested, trusted] = await Promise.all([
+        realpath(requestedCwd as string),
+        realpath(fileURLToPath(sandboxCwd)),
+      ]);
+      if (requested !== trusted) {
+        return {
+          content: [{ type: "text", text: "workflow `cwd` must match the active Codex workspace." }],
+          isError: true,
+        };
+      }
+    } catch {
+      return {
+        content: [{ type: "text", text: "workflow `cwd` or Codex workspace path is invalid." }],
+        isError: true,
+      };
+    }
+  }
+
+  const cwd =
+    requestedCwd ||
+    process.env.ZCODE_PROJECT_DIR ||
+    process.env.CLAUDE_PROJECT_DIR ||
+    process.cwd();
 
   let result: WorkflowResult;
   try {
@@ -179,7 +251,8 @@ async function runWorkflowTool(args: {
       ...(workflowArgs !== undefined ? { args: workflowArgs } : {}),
       ...(resumeFromRunId !== undefined ? { resumeFromRunId } : {}),
       cwd,
-      executors: buildExecutors(),
+      executors: EXECUTORS,
+      ...(signal !== undefined ? { signal } : {}),
       onEvent: (event) => {
         // Stream one-line progress to stderr so a long run isn't opaque. The MCP protocol
         // carries the final result on stdout; stderr is server diagnostics.
@@ -196,10 +269,10 @@ async function runWorkflowTool(args: {
     };
   }
 
-  // Surface the script's return value + actionable run metadata. On failure, include the
-  // failed-agent count and a hint about resume. The model can read this and decide to retry.
-  // 呈现脚本的返回值 + 可操作的 run 元数据。失败时带上 failed-agent 计数和 resume 提示。
-  // 模型可读它并决定是否重试。
+  // Surface the script's return value + actionable run metadata. When any leaf failed, include
+  // the count and a resume hint even if the script intentionally absorbed that failure.
+  // 呈现脚本的返回值 + 可操作的 run 元数据。任何叶节点失败时都带上数量和 resume 提示，
+  // 即便脚本有意吸收了该失败。
   const summary = {
     value: result.value ?? null,
     runId: result.runId,
@@ -219,17 +292,45 @@ async function runWorkflowTool(args: {
   };
 }
 
-function handleRequest(msg: {
-  id?: number | string | null;
-  method?: string;
-  params?: any;
-}): void {
-  const { id, method, params } = msg;
+function handleRequest(msg: unknown): void {
+  if (typeof msg !== "object" || msg === null || Array.isArray(msg)) {
+    fail(null, -32600, "Invalid Request");
+    return;
+  }
 
+  const request = msg as {
+    id?: number | string | null;
+    method?: unknown;
+    params?: unknown;
+  };
+  const { id, method, params } = request;
+  if (
+    id !== undefined &&
+    id !== null &&
+    typeof id !== "number" &&
+    typeof id !== "string"
+  ) {
+    fail(null, -32600, "Invalid Request");
+    return;
+  }
+  if (typeof method !== "string") {
+    fail(id ?? null, -32600, "Invalid Request");
+    return;
+  }
   // Notifications (no id) — ignore after initialize.
   // 通知（无 id）—— initialize 之后忽略。
   if (id === undefined || id === null) {
     if (method === "notifications/initialized" || method === "initialized") return;
+    if (method === "notifications/cancelled") {
+      const requestId =
+        typeof params === "object" && params !== null && "requestId" in params
+          ? (params as { requestId?: unknown }).requestId
+          : undefined;
+      if (typeof requestId === "number" || typeof requestId === "string") {
+        activeCalls.get(requestId)?.abort();
+      }
+      return;
+    }
     process.stderr.write(`[odw] ignore notification ${method}\n`);
     return;
   }
@@ -237,8 +338,11 @@ function handleRequest(msg: {
   switch (method) {
     case "initialize":
       ok(id, {
-        protocolVersion: params?.protocolVersion || "2024-11-05",
-        capabilities: { tools: {} },
+        protocolVersion:
+          typeof params === "object" && params !== null && "protocolVersion" in params
+            ? (params as { protocolVersion?: string }).protocolVersion || "2024-11-05"
+            : "2024-11-05",
+        capabilities: { tools: {}, experimental: { [SANDBOX_META_KEY]: {} } },
         serverInfo: SERVER_INFO,
       });
       return;
@@ -249,15 +353,44 @@ function handleRequest(msg: {
       ok(id, { tools: TOOLS });
       return;
     case "tools/call": {
-      const name = params?.name;
-      const callArgs = params?.arguments || {};
+      if (typeof params !== "object" || params === null || Array.isArray(params)) {
+        fail(id, -32602, "Invalid params");
+        return;
+      }
+      const toolParams = params as {
+        name?: unknown;
+        arguments?: unknown;
+        _meta?: Record<string, unknown>;
+      };
+      const name = toolParams.name;
+      const callArgs = toolParams.arguments ?? {};
       if (name !== "workflow") {
         fail(id, -32601, `Unknown tool: ${name}`);
         return;
       }
+      if (typeof callArgs !== "object" || callArgs === null || Array.isArray(callArgs)) {
+        fail(id, -32602, "Invalid workflow arguments");
+        return;
+      }
       // Async handler — tools/call runs a full workflow (potentially minutes).
       // 异步处理——tools/call 运行一整个 workflow（可能数分钟）。
-      void runWorkflowTool(callArgs).then((toolResult) => ok(id, toolResult));
+      const controller = new AbortController();
+      activeCalls.set(id, controller);
+      const sandboxState = toolParams._meta?.[SANDBOX_META_KEY];
+      const sandboxCwd =
+        typeof sandboxState === "object" && sandboxState !== null && "sandboxCwd" in sandboxState
+          ? (sandboxState as { sandboxCwd?: unknown }).sandboxCwd
+          : undefined;
+      void runWorkflowTool(callArgs, controller.signal, sandboxCwd)
+        .then((toolResult) => ok(id, toolResult))
+        .catch((err) => {
+          const message = err instanceof Error ? err.message : String(err);
+          ok(id, {
+            content: [{ type: "text", text: `workflow request failed: ${message}` }],
+            isError: true,
+          });
+        })
+        .finally(() => activeCalls.delete(id));
       return;
     }
     default:
@@ -273,9 +406,14 @@ function handleRaw(raw: string): void {
     msg = JSON.parse(trimmed);
   } catch (err) {
     process.stderr.write(`[odw] bad JSON: ${err}\n`);
+    fail(null, -32700, "Parse error");
     return;
   }
   if (Array.isArray(msg)) {
+    if (msg.length === 0) {
+      fail(null, -32600, "Invalid Request");
+      return;
+    }
     for (const item of msg) handleRequest(item);
     return;
   }
@@ -318,7 +456,8 @@ process.stdin.on("data", (chunk: Buffer) => {
 });
 
 process.stdin.on("end", () => {
+  for (const controller of activeCalls.values()) controller.abort();
   if (buffer.length) handleRaw(buffer.toString("utf8"));
 });
 
-process.stderr.write(`[odw] open-dynamic-workflows MCP server ready (executor: zcode)\n`);
+process.stderr.write(`[odw] open-dynamic-workflows MCP server ready (executors: codex,zcode)\n`);

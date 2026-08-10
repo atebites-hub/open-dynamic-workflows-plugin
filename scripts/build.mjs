@@ -13,7 +13,7 @@
 // 结果运行时零依赖——安装后的插件不需要 node_modules（与所有其它 zcode 插件一致：
 // android-emulator、example-plugin、ponytail）。
 //
-// Run: `node scripts/build.mjs` (after `npm install` for esbuild).
+// Run: `node scripts/build.mjs` (after `npm ci --ignore-scripts` for esbuild).
 // Also run via `npm run setup`, which chains submodule init + install + this build.
 
 import { chmod, mkdir, rm } from "node:fs/promises";
@@ -40,8 +40,8 @@ if (!process.env.ODW_SKIP_BUILD) {
     );
     process.exit(1);
   }
-  console.log("[build] installing + building ODW (npm install && npm run build)…");
-  execSync("npm install && npm run build", { cwd: odwSubmodule, stdio: "inherit" });
+  console.log("[build] installing + building ODW (npm ci --ignore-scripts && npm run build)…");
+  execSync("npm ci --ignore-scripts && npm run build", { cwd: odwSubmodule, stdio: "inherit" });
   if (!existsSync(resolve(odwDist, "index.js"))) {
     console.error("[build] ODW build did not produce dist/index.js.");
     process.exit(1);

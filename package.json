@@ -1,14 +1,16 @@
 {
   "name": "open-dynamic-workflows-plugin",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Dynamic workflow orchestration for ZCode — a zcode plugin packaging the Open Dynamic Workflows runtime. Dev dependencies only; the shipped dist/mcp/server.js is self-contained.",
+  "description": "Dynamic workflow orchestration for Codex and ZCode. Dev dependencies only; the shipped dist/mcp/server.js is self-contained.",
   "license": "MIT",
   "type": "module",
   "scripts": {
     "setup": "node scripts/setup.mjs",
     "build": "node scripts/build.mjs",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "typecheck": "tsc --noEmit",
+    "verify": "npm run typecheck && npm run build && npm run smoke"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
