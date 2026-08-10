@@ -122,6 +122,7 @@ const WORKFLOW_TOOL = {
 
 const TOOLS = [WORKFLOW_TOOL];
 const activeCalls = new Map<number | string, AbortController>();
+let responseFraming: "content-length" | "line" = "content-length";
 
 // ────────────────────────────────────────────────────────────────────────────
 // MCP JSON-RPC over stdio (Content-Length framing + bare-line fallback).
@@ -132,6 +133,10 @@ const activeCalls = new Map<number | string, AbortController>();
 
 function writeMessage(message: unknown): void {
   const body = JSON.stringify(message);
+  if (responseFraming === "line") {
+    process.stdout.write(`${body}\n`);
+    return;
+  }
   // MCP stdio framing: Content-Length header + body.
   // MCP stdio 分帧：Content-Length 头 + body。
   const payload = `Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`;
@@ -433,6 +438,7 @@ process.stdin.on("data", (chunk: Buffer) => {
       // 回退：若 buffer 看起来像无分帧的完整 JSON 行，按行解析。
       const asText = buffer.toString("utf8");
       if (asText.includes("\n") && asText.trimStart().startsWith("{")) {
+        responseFraming = "line";
         const lines = asText.split(/\r?\n/);
         buffer = Buffer.from(lines.pop() || "", "utf8");
         for (const line of lines) handleRaw(line);
@@ -451,6 +457,7 @@ process.stdin.on("data", (chunk: Buffer) => {
     if (buffer.length < bodyEnd) break;
     const body = buffer.slice(bodyStart, bodyEnd).toString("utf8");
     buffer = buffer.slice(bodyEnd);
+    responseFraming = "content-length";
     handleRaw(body);
   }
 });

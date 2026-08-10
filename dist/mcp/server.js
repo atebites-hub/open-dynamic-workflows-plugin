@@ -8286,8 +8286,14 @@ var WORKFLOW_TOOL = {
 };
 var TOOLS = [WORKFLOW_TOOL];
 var activeCalls = /* @__PURE__ */ new Map();
+var responseFraming = "content-length";
 function writeMessage(message) {
   const body = JSON.stringify(message);
+  if (responseFraming === "line") {
+    process.stdout.write(`${body}
+`);
+    return;
+  }
   const payload = `Content-Length: ${Buffer.byteLength(body, "utf8")}\r
 \r
 ${body}`;
@@ -8503,6 +8509,7 @@ process.stdin.on("data", (chunk) => {
     if (headerEnd === -1) {
       const asText = buffer.toString("utf8");
       if (asText.includes("\n") && asText.trimStart().startsWith("{")) {
+        responseFraming = "line";
         const lines = asText.split(/\r?\n/);
         buffer = Buffer.from(lines.pop() || "", "utf8");
         for (const line of lines) handleRaw(line);
@@ -8521,6 +8528,7 @@ process.stdin.on("data", (chunk) => {
     if (buffer.length < bodyEnd) break;
     const body = buffer.slice(bodyStart, bodyEnd).toString("utf8");
     buffer = buffer.slice(bodyEnd);
+    responseFraming = "content-length";
     handleRaw(body);
   }
 });
