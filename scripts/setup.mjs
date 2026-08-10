@@ -5,7 +5,7 @@
 // 串联贡献者全新 clone 后所需的步骤：
 //   1. Init + update git submodules (ODW + zcode-cli source).
 //   2. Install the plugin's own dev deps (esbuild, typescript, @types/node).
-//   3. Build ODW (npm install + tsc → open-dynamic-workflows/dist/).
+//   3. Build ODW (locked no-lifecycle install + tsc → open-dynamic-workflows/dist/).
 //   4. esbuild-bundle the MCP server → dist/mcp/server.js.
 //
 // Note: zcode-cli is a submodule purely for co-editing convenience (working on the
@@ -37,8 +37,8 @@ if (!existsSync(resolve(root, "open-dynamic-workflows", "package.json"))) {
 
 // 2. Plugin dev deps.
 // 2. 插件开发依赖。
-console.log("[setup] installing plugin dev deps (npm install)…");
-run("npm install");
+console.log("[setup] installing plugin dev deps (npm ci --ignore-scripts)…");
+run("npm ci --ignore-scripts");
 
 // 3 + 4. Build ODW then esbuild the server (delegated to build.mjs).
 // 3 + 4. 先构建 ODW 再 esbuild server（委托给 build.mjs）。
@@ -47,4 +47,4 @@ run("node scripts/build.mjs");
 
 console.log("\n[setup] ✓ done. The plugin is built at dist/mcp/server.js.");
 console.log("[setup]   - smoke test:   npm run smoke");
-console.log("[setup]   - local install: see README.md → 'Local install test'");
+console.log("[setup]   - install:      see README.md → 'Install (Codex)'");

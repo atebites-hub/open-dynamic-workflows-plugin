@@ -6911,7 +6911,7 @@ async function openJournal(params) {
   const journalPath = path.join(runDir, "journal.jsonl");
   const eventsPath = path.join(runDir, "events.jsonl");
   const statusPath = path.join(runDir, "journal-status.json");
-  await mkdir(agentsDir, { recursive: true });
+  await mkdir(agentsDir, { recursive: true, mode: 448 });
   let resumeCache;
   if (params.resumeFromRunId !== void 0) {
     const priorJournal = path.join(params.baseDir, params.resumeFromRunId, "journal.jsonl");
@@ -6932,7 +6932,7 @@ async function openJournal(params) {
     async persistScript(source, ext) {
       const scriptPath = path.join(runDir, `script.${ext}`);
       try {
-        await writeFile(scriptPath, source, "utf8");
+        await writeFile(scriptPath, source, { encoding: "utf8", mode: 384 });
       } catch (err) {
         recordError("persistScript", err);
       }
@@ -6944,7 +6944,7 @@ async function openJournal(params) {
 `;
       appendChain = appendChain.then(async () => {
         try {
-          await appendFile(journalPath, line, "utf8");
+          await appendFile(journalPath, line, { encoding: "utf8", mode: 384 });
         } catch (err) {
           recordError("append", err);
         }
@@ -6955,7 +6955,7 @@ async function openJournal(params) {
 `;
       eventChain = eventChain.then(async () => {
         try {
-          await appendFile(eventsPath, line, "utf8");
+          await appendFile(eventsPath, line, { encoding: "utf8", mode: 384 });
         } catch (err) {
           recordError("event append", err);
         }
@@ -6973,7 +6973,10 @@ async function openJournal(params) {
       const result = { durable: errors.length === 0, errors: [...errors] };
       try {
         await writeFile(statusPath, `${JSON.stringify(result)}
-`, "utf8");
+`, {
+          encoding: "utf8",
+          mode: 384
+        });
       } catch (err) {
         recordError("status write", err);
         result.durable = false;
@@ -7172,6 +7175,7 @@ function createHooks(ctx, deps) {
         signal: ctx.abort,
         tracePath: path2.join(ctx.runDir, "agents", `agent-${id}.jsonl`),
         ...resolvedModel !== void 0 ? { model: resolvedModel } : {},
+        ...o.reasoningEffort !== void 0 ? { reasoningEffort: o.reasoningEffort } : {},
         ...o.schema !== void 0 ? { schema: o.schema } : {},
         ...appendSystemPrompt !== void 0 ? { appendSystemPrompt } : {},
         ...ctx.agentTimeoutMs !== void 0 ? { timeoutMs: ctx.agentTimeoutMs } : {}
@@ -7612,7 +7616,7 @@ var DEBUG = process.env.ODW_DEBUG === "1" || process.env.ODW_DEBUG === "true";
 async function writeTrace(tracePath, trace) {
   try {
     await mkdir2(dirname(tracePath), { recursive: true });
-    await writeFile2(tracePath, JSON.stringify(trace, null, 2));
+    await writeFile2(tracePath, JSON.stringify(trace, null, 2), { mode: 384 });
   } catch (err) {
     console.warn(`[${trace.command}] trace write failed (${tracePath}):`, err);
   }
@@ -8006,10 +8010,16 @@ function buildCodexArgs(opts, schemaPath) {
     "--color",
     "never",
     "--sandbox",
-    "workspace-write"
+    "workspace-write",
+    "-c",
+    "shell_environment_policy.ignore_default_excludes=false"
   ];
   if (opts.model)
     args.push("-m", opts.model);
+  const reasoningEffort = opts.reasoningEffort ?? (opts.model ? "medium" : void 0);
+  if (reasoningEffort) {
+    args.push("-c", `model_reasoning_effort=${JSON.stringify(reasoningEffort)}`);
+  }
   if (schemaPath)
     args.push("--output-schema", schemaPath);
   if (opts.appendSystemPrompt) {
@@ -8049,7 +8059,7 @@ var codexExecutor = makeSubprocessExecutor({
       return { args: buildCodexArgs(opts), stdin: opts.prompt };
     }
     const schemaPath = join(tmpdir(), `codex-schema-${randomBytes2(8).toString("hex")}.json`);
-    await writeFile3(schemaPath, JSON.stringify(opts.schema));
+    await writeFile3(schemaPath, JSON.stringify(opts.schema), { mode: 384 });
     return {
       args: buildCodexArgs(opts, schemaPath),
       stdin: opts.prompt,
@@ -8193,18 +8203,19 @@ var zcodeExecutor = makeSubprocessExecutor({
 });
 
 // src/mcp/server.ts
+import { realpath } from "node:fs/promises";
+import { isAbsolute } from "node:path";
+import { fileURLToPath } from "node:url";
 var SERVER_INFO = {
   name: "open-dynamic-workflows",
-  version: "0.1.0"
+  version: "0.2.0"
 };
-function buildExecutors() {
-  void process.env.ODW_DEFAULT_EXECUTOR;
-  return { zcode: zcodeExecutor };
-}
+var EXECUTORS = { codex: codexExecutor, zcode: zcodeExecutor };
+var SANDBOX_META_KEY = "codex/sandbox-state-meta";
 var WORKFLOW_TOOL = {
   name: "workflow",
   description: [
-    "Execute a dynamic workflow script that orchestrates multiple zcode subagents deterministically.",
+    "Execute a dynamic workflow script that orchestrates Codex or ZCode subagents deterministically.",
     "A dynamic workflow is plain JavaScript (NOT TypeScript) that orchestrates subagents at scale:",
     "the model writes the script, this tool runs it.",
     "",
@@ -8219,8 +8230,10 @@ var WORKFLOW_TOOL = {
     "  variables, spreads, or interpolation).",
     "- These globals are injected into scope: agent(prompt, {executor, ...}), parallel(thunks),",
     "  pipeline(items, ...stages), phase(title), log(message), args, workflow(ref, args?).",
-    "- Every agent() MUST name an executor: {executor:'zcode'}. There is no default; an unknown",
-    "  name fails the run. (zcode is the executor this plugin provides.)",
+    "- Every agent() MUST name an executor: {executor:'codex'} or {executor:'zcode'}. There is",
+    "  no default; an unknown name fails the run.",
+    "- Codex model overrides default reasoningEffort to 'medium'; set reasoningEffort explicitly",
+    "  only when the selected model supports the requested value.",
     "- agent(prompt, {schema}) returns a validated object (schema root must be type:'object').",
     "- pipeline() has NO barrier between stages (default for multi-stage); parallel() IS a barrier.",
     "- Determinism: Date.now/Math.random/argless new Date() throw (resume safety). Pass timestamps",
@@ -8229,6 +8242,8 @@ var WORKFLOW_TOOL = {
     "- A top-level `return <value>` is the workflow's result (JSON-serializable).",
     "",
     "PARAMETERS:",
+    "- cwd: absolute project directory for workflow artifacts and subagents. Codex callers MUST",
+    "  pass the active workspace path because the plugin server itself runs from its install dir.",
     "- script: the inline JS source (preferred). Pass the script inline \u2014 do NOT write it to a",
     "  file first.",
     "- scriptPath: path to a saved script file (alternative to script; use for re-runs).",
@@ -8236,8 +8251,9 @@ var WORKFLOW_TOOL = {
     "- resumeFromRunId: re-run a previous run; completed agent() calls replay from the journal with",
     "  ZERO token spend, the rest run live.",
     "",
-    "RESULT: the tool returns whatever the script `return`ed (its `value`), plus run metadata. On",
-    "failure (failedAgents > 0 or !ok), isError is true and the text carries the failure reason.",
+    "RESULT: the tool returns whatever the script `return`ed (its `value`), plus run metadata.",
+    "isError is true when !ok; swallowed leaf failures keep ok=true but appear in failedAgents",
+    "with a resume hint.",
     "",
     "Artifacts (script snapshot, journal, per-agent traces) land under .odw/<name>/runs/<runId>/.",
     "Consult the $open-dynamic-workflows skill for full authoring guidance and worked patterns."
@@ -8245,6 +8261,11 @@ var WORKFLOW_TOOL = {
   inputSchema: {
     type: "object",
     properties: {
+      cwd: {
+        type: "string",
+        minLength: 1,
+        description: "Absolute project directory used for workflow artifacts and subagents. Required from Codex callers."
+      },
       script: {
         type: "string",
         description: "The inline workflow script source (plain JS, starts with `export const meta = {...}`). Preferred over scriptPath."
@@ -8264,6 +8285,7 @@ var WORKFLOW_TOOL = {
   }
 };
 var TOOLS = [WORKFLOW_TOOL];
+var activeCalls = /* @__PURE__ */ new Map();
 function writeMessage(message) {
   const body = JSON.stringify(message);
   const payload = `Content-Length: ${Buffer.byteLength(body, "utf8")}\r
@@ -8277,8 +8299,8 @@ function ok(id, result) {
 function fail(id, code, message) {
   writeMessage({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
 }
-async function runWorkflowTool(args) {
-  const { script, scriptPath, args: workflowArgs, resumeFromRunId } = args;
+async function runWorkflowTool(args, signal, sandboxCwd) {
+  const { cwd: requestedCwd, script, scriptPath, args: workflowArgs, resumeFromRunId } = args;
   if (!script && !scriptPath) {
     return {
       content: [
@@ -8290,7 +8312,55 @@ async function runWorkflowTool(args) {
       isError: true
     };
   }
-  const cwd = process.env.ZCODE_PROJECT_DIR || process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  if (process.env.ODW_REQUIRE_CWD === "1" && requestedCwd === void 0) {
+    return {
+      content: [{ type: "text", text: "Codex workflow calls require an absolute `cwd`." }],
+      isError: true
+    };
+  }
+  if (requestedCwd !== void 0 && (typeof requestedCwd !== "string" || !requestedCwd || !isAbsolute(requestedCwd))) {
+    return {
+      content: [{ type: "text", text: "workflow `cwd` must be an absolute project path." }],
+      isError: true
+    };
+  }
+  if (script !== void 0 && typeof script !== "string" || scriptPath !== void 0 && typeof scriptPath !== "string" || resumeFromRunId !== void 0 && typeof resumeFromRunId !== "string") {
+    return {
+      content: [
+        {
+          type: "text",
+          text: "workflow script, scriptPath, and resumeFromRunId must be strings."
+        }
+      ],
+      isError: true
+    };
+  }
+  if (process.env.ODW_REQUIRE_CWD === "1") {
+    if (typeof sandboxCwd !== "string") {
+      return {
+        content: [{ type: "text", text: "Codex did not provide trusted workspace metadata." }],
+        isError: true
+      };
+    }
+    try {
+      const [requested, trusted] = await Promise.all([
+        realpath(requestedCwd),
+        realpath(fileURLToPath(sandboxCwd))
+      ]);
+      if (requested !== trusted) {
+        return {
+          content: [{ type: "text", text: "workflow `cwd` must match the active Codex workspace." }],
+          isError: true
+        };
+      }
+    } catch {
+      return {
+        content: [{ type: "text", text: "workflow `cwd` or Codex workspace path is invalid." }],
+        isError: true
+      };
+    }
+  }
+  const cwd = requestedCwd || process.env.ZCODE_PROJECT_DIR || process.env.CLAUDE_PROJECT_DIR || process.cwd();
   let result;
   try {
     result = await runWorkflow({
@@ -8299,7 +8369,8 @@ async function runWorkflowTool(args) {
       ...workflowArgs !== void 0 ? { args: workflowArgs } : {},
       ...resumeFromRunId !== void 0 ? { resumeFromRunId } : {},
       cwd,
-      executors: buildExecutors(),
+      executors: EXECUTORS,
+      ...signal !== void 0 ? { signal } : {},
       onEvent: (event) => {
         process.stderr.write(`[odw] ${event.type}
 `);
@@ -8328,9 +8399,29 @@ async function runWorkflowTool(args) {
   };
 }
 function handleRequest(msg) {
-  const { id, method, params } = msg;
+  if (typeof msg !== "object" || msg === null || Array.isArray(msg)) {
+    fail(null, -32600, "Invalid Request");
+    return;
+  }
+  const request = msg;
+  const { id, method, params } = request;
+  if (id !== void 0 && id !== null && typeof id !== "number" && typeof id !== "string") {
+    fail(null, -32600, "Invalid Request");
+    return;
+  }
+  if (typeof method !== "string") {
+    fail(id ?? null, -32600, "Invalid Request");
+    return;
+  }
   if (id === void 0 || id === null) {
     if (method === "notifications/initialized" || method === "initialized") return;
+    if (method === "notifications/cancelled") {
+      const requestId = typeof params === "object" && params !== null && "requestId" in params ? params.requestId : void 0;
+      if (typeof requestId === "number" || typeof requestId === "string") {
+        activeCalls.get(requestId)?.abort();
+      }
+      return;
+    }
     process.stderr.write(`[odw] ignore notification ${method}
 `);
     return;
@@ -8338,8 +8429,8 @@ function handleRequest(msg) {
   switch (method) {
     case "initialize":
       ok(id, {
-        protocolVersion: params?.protocolVersion || "2024-11-05",
-        capabilities: { tools: {} },
+        protocolVersion: typeof params === "object" && params !== null && "protocolVersion" in params ? params.protocolVersion || "2024-11-05" : "2024-11-05",
+        capabilities: { tools: {}, experimental: { [SANDBOX_META_KEY]: {} } },
         serverInfo: SERVER_INFO
       });
       return;
@@ -8350,13 +8441,32 @@ function handleRequest(msg) {
       ok(id, { tools: TOOLS });
       return;
     case "tools/call": {
-      const name = params?.name;
-      const callArgs = params?.arguments || {};
+      if (typeof params !== "object" || params === null || Array.isArray(params)) {
+        fail(id, -32602, "Invalid params");
+        return;
+      }
+      const toolParams = params;
+      const name = toolParams.name;
+      const callArgs = toolParams.arguments ?? {};
       if (name !== "workflow") {
         fail(id, -32601, `Unknown tool: ${name}`);
         return;
       }
-      void runWorkflowTool(callArgs).then((toolResult) => ok(id, toolResult));
+      if (typeof callArgs !== "object" || callArgs === null || Array.isArray(callArgs)) {
+        fail(id, -32602, "Invalid workflow arguments");
+        return;
+      }
+      const controller = new AbortController();
+      activeCalls.set(id, controller);
+      const sandboxState = toolParams._meta?.[SANDBOX_META_KEY];
+      const sandboxCwd = typeof sandboxState === "object" && sandboxState !== null && "sandboxCwd" in sandboxState ? sandboxState.sandboxCwd : void 0;
+      void runWorkflowTool(callArgs, controller.signal, sandboxCwd).then((toolResult) => ok(id, toolResult)).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        ok(id, {
+          content: [{ type: "text", text: `workflow request failed: ${message}` }],
+          isError: true
+        });
+      }).finally(() => activeCalls.delete(id));
       return;
     }
     default:
@@ -8372,9 +8482,14 @@ function handleRaw(raw) {
   } catch (err) {
     process.stderr.write(`[odw] bad JSON: ${err}
 `);
+    fail(null, -32700, "Parse error");
     return;
   }
   if (Array.isArray(msg)) {
+    if (msg.length === 0) {
+      fail(null, -32600, "Invalid Request");
+      return;
+    }
     for (const item of msg) handleRequest(item);
     return;
   }
@@ -8410,7 +8525,8 @@ process.stdin.on("data", (chunk) => {
   }
 });
 process.stdin.on("end", () => {
+  for (const controller of activeCalls.values()) controller.abort();
   if (buffer.length) handleRaw(buffer.toString("utf8"));
 });
-process.stderr.write(`[odw] open-dynamic-workflows MCP server ready (executor: zcode)
+process.stderr.write(`[odw] open-dynamic-workflows MCP server ready (executors: codex,zcode)
 `);

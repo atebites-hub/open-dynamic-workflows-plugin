@@ -1,14 +1,23 @@
-# open-dynamic-workflows（ZCode 插件）
+# open-dynamic-workflows（Codex + ZCode 插件）
 
 [English](./README.md)
 
-面向 **ZCode** 的动态工作流编排——把一段确定性 JavaScript 脚本扇出成大量 `zcode` 子
-agent。Claude Code Workflow 运行时的忠实、模型无关的复刻，打包为 ZCode 插件，因此体验
-是原生的：一个 `workflow` 工具、一份编写 skill，以及一个 `/workflows` 命令。
+面向 **Codex 和 ZCode** 的动态工作流编排——通过原生 `workflow` 工具和编写 skill，
+把一段确定性 JavaScript 脚本扇出成大量 CLI 子 agent。
 
 一段动态工作流就是**编排大量子 agent 的纯 JS 脚本**。模型为任务编写脚本；插件内置的
-运行时执行它，把每个 `agent()` 调用扇出成一个真实的 `zcode` 子进程。控制流（循环、分支、
+运行时执行它，把每个 `agent()` 调用扇出成一个真实的 `codex` 或 `zcode` 子进程。控制流（循环、分支、
 扇出）在确定性 JS 里——LLM 的活只发生在叶子节点。
+
+## 安装（Codex）
+
+```bash
+codex plugin marketplace add atebites-hub/open-dynamic-workflows-plugin
+codex plugin add open-dynamic-workflows@open-dynamic-workflows
+```
+
+新开一个 Codex 会话。插件是自包含的，无需在项目中检出或构建 ODW。Codex 调用
+`workflow` 时必须通过 `cwd` 传入当前工作区的绝对路径。
 
 ## 安装（ZCode 用户）
 
@@ -21,7 +30,7 @@ agent。Claude Code Workflow 运行时的忠实、模型无关的复刻，打包
 了一个自包含的 `dist/mcp/server.js`。
 
 安装后，一个会话会获得：
-- 一个 **`workflow` 工具**——模型编写脚本并调用 `workflow({ script: "..." })`；它运行到
+- 一个 **`workflow` 工具**——模型编写脚本并调用 `workflow({ cwd, script })`；它运行到
   完成，返回脚本的返回值。
 - 一份 **`$open-dynamic-workflows` skill**——编写指南（何时用工作流、`meta`/`agent()`/
   `pipeline()`/`parallel()` 契约、成熟的形态）。
@@ -31,17 +40,20 @@ agent。Claude Code Workflow 运行时的忠实、模型无关的复刻，打包
 
 ```
 模型编写一段 JS 工作流脚本
-  └─ 调用 workflow({ script })
+  └─ 调用 workflow({ cwd, script })
       └─ 插件的 MCP server（dist/mcp/server.js）
-          └─ ODW 运行时：runWorkflow({ executors: { zcode: zcodeExecutor } })
-              ├─ 每个 agent({executor:'zcode'}) spawn `zcode --prompt …`（ZCODE_ODW_PROTOCOL=1）
+          └─ ODW 运行时：runWorkflow({ executors: { codex, zcode } })
+              ├─ agent({executor:'codex'}) spawn `codex exec --json …`
+              ├─ agent({executor:'zcode'}) spawn `zcode --prompt …`（ZCODE_ODW_PROTOCOL=1）
               ├─ parallel()/pipeline() 负责编排，journal 持久化结果
               └─ 返回脚本的 `return` 值 + run 元数据
 ```
 
-`zcode` 执行器按名 spawn 用户**已安装的 `zcode`**（取 `PATH` 上的那个），并带
-`ZCODE_ODW_PROTOCOL=1`，使 launcher 输出机器可读的 `zcode_result` 信封。每个 agent 是一
-个真实的模型 turn。Run 可恢复：已完成的 agent 从 journal 零 token 重放。
+两个执行器都使用用户 `PATH` 中已安装的 CLI。Codex 会先用 host 提供的工作区元数据校验
+`cwd`，再在 `workspace-write` 沙箱中运行；其原生 shell 策略会从模型执行的命令中移除
+key/secret/token 环境变量。ZCode 使用 `ZCODE_ODW_PROTOCOL=1`。每个 agent 是一个真实的模型
+turn。Codex 覆盖模型时，推理强度默认设为 `medium`，避免继承不兼容的用户配置。Run 可恢复：
+已完成的 agent 从 journal 零 token 重放。
 
 ## 一段最小工作流
 
@@ -55,7 +67,7 @@ const results = await parallel([
 return { results }
 ```
 
-调用 `workflow({ script: "<上面这段>" })`，工具返回 `{ value: { results: [...] }, runId, ok, ... }`。
+调用 `workflow({ cwd: "/项目的绝对路径", script: "<上面这段>" })`，工具返回 `{ value: { results: [...] }, runId, ok, ... }`。
 
 完整的编写契约（phase、schema、pipeline 与 parallel 的取舍、对抗式校验 / 评审团 /
 直到搜干等形态）见 `$open-dynamic-workflows` skill。
@@ -83,19 +95,22 @@ return { results }
 用户运行的 `dist/mcp/server.js` 由 submodule 构建并提交。clone 之后：
 
 ```bash
-npm run setup    # 初始化 submodule + npm install + 构建 ODW + esbuild → dist/mcp/server.js
+npm run setup    # 初始化 submodule + 锁定安装 + 构建 ODW + esbuild → dist/mcp/server.js
 npm run smoke    # 构建产物的独立 JSON-RPC 冒烟测试
 npm run build    # 只重新打包（跳过 submodule 初始化）
+npm run verify   # 重新打包并运行插件冒烟检查
 ```
 
 构建（`scripts/build.mjs`）用 esbuild 把 ODW 及其唯一依赖（`ajv`）内联进单个 ESM 文件，
 与 android-emulator 插件的模式一致。交付给用户的产物不含 `node_modules`。
 
-## 说明 / 范围（v0.1）
+## 说明 / 范围（v0.2）
 
-- **仅 zcode worker。** 插件注册 `{ zcode: zcodeExecutor }`。脚本里指定别的执行器会以
-  ODW 清晰的 "unknown executor" 报错失败。Claude/codex 支持以后通过 `userConfig` 开关接入。
+- **Codex 和 ZCode worker。** 插件注册两个执行器；每个 `agent()` 仍须显式指定一个。
+  未知名称会立即失败。
 - **同步工具。** `workflow()` 运行到完成再返回（v1）。带 task 通知的后台执行是 v2 增强。
+- **本地证据。** `.odw/` 产物包含工作流脚本、prompt 和 agent 响应；新建的 run 文件仅 owner
+  可读写。请保持 `.odw/` 被 gitignore。
 - **没有 ultracode 自动决策。** 推荐是被动的——skill 和工具描述告诉模型何时适合用工作流。
   由模型决定；不强制注入任何东西。
 - **遥测。** `zcode_result` 信封目前把 `costUsd`/`inputTokens`/`outputTokens` 报为 null

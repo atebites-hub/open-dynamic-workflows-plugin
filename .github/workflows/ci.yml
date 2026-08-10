@@ -1,0 +1,41 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.10.0"
+          cache: npm
+
+      - name: Install locked plugin dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Audit dependency locks
+        run: |
+          npm audit --package-lock-only --audit-level high
+          npm --prefix open-dynamic-workflows audit --package-lock-only --audit-level high
+
+      - name: Verify ODW runtime and plugin bundle
+        run: |
+          npm run verify
+          npm --prefix open-dynamic-workflows run typecheck
+          npm --prefix open-dynamic-workflows run smoke
+          git diff --exit-code -- dist/mcp/server.js

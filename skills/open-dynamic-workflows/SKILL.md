@@ -5,8 +5,8 @@ description: >-
   the orchestration codified as a rerunnable script — codebase-wide audits/bug sweeps,
   large migrations (hundreds of files), research that cross-checks sources against each
   other, or a hard plan worth drafting from several independent angles. Teaches how to
-  WRITE a dynamic-workflow JavaScript script (the official contract) and how to RUN it on
-  this project's runtime (`workflow run` / `runWorkflow`).
+  WRITE a dynamic-workflow JavaScript script (the official contract) and how to RUN it with
+  the installed `workflow` tool or standalone runtime.
 ---
 
 # Dynamic workflows: how to write one, and how to run it
@@ -66,9 +66,10 @@ These are injected into the script scope:
   matching object and `agent()` resolves to the **validated object**. Returns `null` if the
   agent is skipped/aborted (filter with `.filter(Boolean)`). `opts`: `executor` (**required** —
   picks which agent CLI runs this node, by name, from the registry the host provides, e.g.
-  `'claude'` or `'codex'`; an unknown name fails the run), `label` (short display label),
+  `'codex'` or `'zcode'`; an unknown name fails the run), `label` (short display label),
   `phase` (assign to a progress group — **use this inside parallel/pipeline stages**),
-  `schema`, `model` (override; omit to inherit), `isolation:'worktree'` (fresh git worktree —
+  `schema`, `model` (override; omit to inherit), `reasoningEffort` (Codex override; a model
+  override defaults to `medium`), `isolation:'worktree'` (fresh git worktree —
   EXPENSIVE, only when agents mutate files in parallel), `agentType` (named subagent preset).
   Each node names its own executor — there is **no default**, so different nodes in one script
   can run on different CLIs (see the per-node example below).
@@ -94,8 +95,8 @@ Because `executor` is **per node**, one script can mix CLIs — e.g. have one CL
 different one review, when you want the verifier to be a different model from the author:
 
 ```js
-// Each agent() names its own CLI. Both 'claude' and 'codex' come from the host's registry.
-const draft = await agent('Draft a fix for this failing test.', { executor: 'claude', label: 'draft' })
+// Each agent() names its own CLI. This plugin registers 'codex' and 'zcode'.
+const draft = await agent('Draft a fix for this failing test.', { executor: 'zcode', label: 'draft' })
 const review = await agent(`Independently review this fix — is it correct?\n\n${draft}`, {
   executor: 'codex', label: 'review', schema: VERDICT_SCHEMA,
 })
@@ -176,12 +177,12 @@ const DIMENSIONS = [
 
 const results = await pipeline(
   DIMENSIONS,
-  (d) => agent(d.prompt, { executor: 'claude', label: `review:${d.key}`, phase: 'Review', schema: FINDINGS_SCHEMA }),
+  (d) => agent(d.prompt, { executor: 'codex', label: `review:${d.key}`, phase: 'Review', schema: FINDINGS_SCHEMA }),
   (review) =>
     parallel(
       review.findings.map((f) => () =>
         agent(`Adversarially verify this finding — is it real? ${f.title}`, {
-          executor: 'claude', label: `verify:${f.file}`, phase: 'Verify', schema: VERDICT_SCHEMA,
+          executor: 'codex', label: `verify:${f.file}`, phase: 'Verify', schema: VERDICT_SCHEMA,
         }).then((v) => ({ ...f, verdict: v })),
       ),
     ),
@@ -202,7 +203,25 @@ structure — the example only teaches the primitives.
 
 ---
 
-## How to RUN a workflow (this project's runtime)
+## How to RUN a workflow
+
+### Codex or ZCode plugin
+
+Call the installed `workflow` tool with the script inline. Codex callers must pass the active
+workspace as an absolute `cwd`; the MCP server itself starts from the plugin install directory:
+
+```js
+workflow({
+  cwd: '/absolute/path/to/project',
+  script: "export const meta = { name: 'demo', description: 'one leaf' }\n" +
+    "return await agent('Reply with OK only.', { executor: 'codex' })",
+})
+```
+
+ZCode callers may omit `cwd` because the host supplies `ZCODE_PROJECT_DIR`. Every `agent()` still
+names its executor explicitly: this plugin registers `codex` and `zcode`.
+
+### Standalone runtime
 
 Save the script as **`.odw/<name>/script.js`** in your project — each workflow gets its own
 self-contained folder. If the CLI isn't installed yet, install it first (it provides the

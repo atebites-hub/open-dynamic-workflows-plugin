@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "open-dynamic-workflows": {
+      "command": "node",
+      "args": ["./dist/mcp/server.js"],
+      "cwd": ".",
+      "tool_timeout_sec": 28800,
+      "env": {
+        "ODW_REQUIRE_CWD": "1"
+      }
+    }
+  }
+}
