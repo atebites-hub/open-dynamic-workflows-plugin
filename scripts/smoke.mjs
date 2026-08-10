@@ -11,7 +11,7 @@
 // Run AFTER `node scripts/build.mjs` (or `npm run setup`).
 // 在 `node scripts/build.mjs`（或 `npm run setup`）之后运行。
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { delimiter, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -369,6 +369,28 @@ try {
 } finally {
   proc.kill();
 }
+
+const lineProtocol = spawnSync(process.execPath, [serverPath], {
+  cwd: scratch,
+  encoding: "utf8",
+  env: { ...process.env, ODW_REQUIRE_CWD: "1" },
+  input:
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: 12,
+      method: "initialize",
+      params: {
+        protocolVersion: "2024-11-05",
+        capabilities: {},
+        clientInfo: { name: "line-smoke", version: "0" },
+      },
+    }) + "\n",
+});
+expect("newline-delimited MCP clients receive a newline-delimited response", () => {
+  const response = JSON.parse(lineProtocol.stdout.trim());
+  assert.equal(response.id, 12);
+  assert.equal(response.result.serverInfo.name, "open-dynamic-workflows");
+});
 
 console.log(`\n[smoke] ${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);
