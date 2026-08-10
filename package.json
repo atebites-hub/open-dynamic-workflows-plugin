@@ -10,7 +10,7 @@
     "build": "node scripts/build.mjs",
     "smoke": "node scripts/smoke.mjs",
     "typecheck": "tsc --noEmit",
-    "verify": "npm run typecheck && npm run build && npm run smoke"
+    "verify": "npm run build && npm run typecheck && npm run smoke"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
