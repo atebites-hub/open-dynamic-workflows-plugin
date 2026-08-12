@@ -8202,20 +8202,211 @@ var zcodeExecutor = makeSubprocessExecutor({
   reduce: (events, { stderr, exitCode, opts }) => reduceZcode(events, { stderr, exitCode, opts })
 });
 
+// src/mcp/grok.ts
+import { randomBytes as randomBytes3 } from "node:crypto";
+import { existsSync } from "node:fs";
+import { unlink as unlink2, writeFile as writeFile4 } from "node:fs/promises";
+import { homedir, tmpdir as tmpdir2 } from "node:os";
+import { delimiter, dirname as dirname2, join as join2 } from "node:path";
+
+// src/mcp/grok-json.ts
+function isObject4(v) {
+  return typeof v === "object" && v !== null;
+}
+function toFiniteNumber4(v) {
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+function parseGrokStreamLine(line) {
+  const trimmed = line.trim();
+  if (trimmed.length === 0) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    return isObject4(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+function reduceGrokStreamEvents(events, opts) {
+  let text = "";
+  let sessionId = null;
+  let sawEnd = false;
+  let sawError = false;
+  let errorText = "";
+  let stopReason = "";
+  let costUsd = 0;
+  let telemetryAvailable = false;
+  const usage = { inputTokens: 0, outputTokens: 0 };
+  for (const event of events) {
+    if (!isObject4(event)) continue;
+    const type = event["type"];
+    if (type === "text" && typeof event["data"] === "string") {
+      text += event["data"];
+      continue;
+    }
+    if (type === "error") {
+      sawError = true;
+      if (typeof event["message"] === "string" && event["message"].trim().length > 0) {
+        errorText = event["message"].trim();
+      }
+      continue;
+    }
+    if (type === "end") {
+      sawEnd = true;
+      if (typeof event["sessionId"] === "string") sessionId = event["sessionId"];
+      if (typeof event["stopReason"] === "string") stopReason = event["stopReason"];
+      if (typeof event["total_cost_usd"] === "number" && Number.isFinite(event["total_cost_usd"])) {
+        costUsd = event["total_cost_usd"];
+        telemetryAvailable = true;
+      }
+      const rawUsage = event["usage"];
+      if (isObject4(rawUsage)) {
+        usage.inputTokens = toFiniteNumber4(rawUsage["input_tokens"]);
+        usage.outputTokens = toFiniteNumber4(rawUsage["output_tokens"]);
+        telemetryAvailable = true;
+      }
+    }
+  }
+  const exitFailed = opts?.exitCode !== void 0 && opts.exitCode !== null && opts.exitCode !== 0;
+  const isError = sawError || !sawEnd || exitFailed;
+  const outcome = {
+    text: isError && text.length === 0 && errorText.length > 0 ? errorText : text,
+    sessionId,
+    costUsd,
+    resultSubtype: isError ? stopReason === "max_turn_requests" || stopReason === "max_tokens" ? "error_max_turns" : "error_during_execution" : "success",
+    isError,
+    usage,
+    telemetryAvailable
+  };
+  if (opts?.schema) {
+    const candidate = extractJsonObject(outcome.text) ?? outcome.text;
+    try {
+      outcome.structuredOutput = JSON.parse(candidate);
+    } catch {
+      outcome.isError = true;
+      outcome.resultSubtype = "error_during_execution";
+    }
+  }
+  return outcome;
+}
+
+// src/mcp/grok.ts
+var GROK_BUILD_BIN_DIR = "/home/box/.grok/bin";
+var GROK_BIN = process.env.GROK_BIN?.trim() || "grok";
+var PERMISSION_MODES = /* @__PURE__ */ new Set([
+  "default",
+  "acceptEdits",
+  "auto",
+  "dontAsk",
+  "bypassPermissions",
+  "plan"
+]);
+function grokPermissionMode() {
+  const raw = process.env.GROK_ODW_PERMISSION_MODE?.trim();
+  if (raw && PERMISSION_MODES.has(raw)) return raw;
+  return "acceptEdits";
+}
+function grokChildPath() {
+  const prefix = [];
+  const homeBin = join2(homedir(), ".grok", "bin");
+  for (const dir of [GROK_BUILD_BIN_DIR, homeBin]) {
+    if (existsSync(dir) && !prefix.includes(dir)) prefix.push(dir);
+  }
+  const pinned = process.env.GROK_BIN?.trim();
+  if (pinned && pinned.includes("/")) {
+    const dir = dirname2(pinned);
+    if (dir && !prefix.includes(dir)) prefix.unshift(dir);
+  }
+  const rest = process.env.PATH ?? "";
+  return prefix.length > 0 ? `${prefix.join(delimiter)}${delimiter}${rest}` : rest;
+}
+function grokChildEnv() {
+  return {
+    PATH: grokChildPath(),
+    GROK_DISABLE_AUTOUPDATER: "1"
+  };
+}
+function buildGrokArgs(opts, promptPath) {
+  const args = [
+    "--prompt-file",
+    promptPath,
+    "--output-format",
+    "streaming-json",
+    "--permission-mode",
+    grokPermissionMode(),
+    "--cwd",
+    opts.cwd,
+    "--no-subagents",
+    "--no-plan",
+    "--no-memory",
+    "--verbatim",
+    "--no-auto-update"
+  ];
+  if (process.env.GROK_ODW_ALWAYS_APPROVE === "1") {
+    args.push("--always-approve");
+  }
+  if (opts.model) args.push("-m", opts.model);
+  if (opts.reasoningEffort) args.push("--reasoning-effort", opts.reasoningEffort);
+  if (opts.appendSystemPrompt) args.push("--rules", opts.appendSystemPrompt);
+  if (opts.schema) args.push("--json-schema", JSON.stringify(opts.schema));
+  if (opts.resumeSessionId) args.push("--resume", opts.resumeSessionId);
+  return args;
+}
+function reduceGrok(events, ctx) {
+  const outcome = reduceGrokStreamEvents(events, {
+    schema: ctx.opts.schema !== void 0,
+    exitCode: ctx.exitCode
+  });
+  const core = {
+    text: outcome.text,
+    sessionId: outcome.sessionId,
+    costUsd: outcome.costUsd,
+    resultSubtype: outcome.resultSubtype,
+    isError: outcome.isError,
+    usage: {
+      inputTokens: outcome.usage.inputTokens,
+      outputTokens: outcome.usage.outputTokens
+    },
+    ...outcome.telemetryAvailable ? { telemetryAvailable: true } : {},
+    ...outcome.structuredOutput !== void 0 ? { structuredOutput: outcome.structuredOutput } : {}
+  };
+  if (core.isError && ctx.stderr.trim().length > 0 && core.text.length === 0) {
+    core.text = ctx.stderr.trim();
+  }
+  return core;
+}
+var grokExecutor = makeSubprocessExecutor({
+  command: GROK_BIN,
+  prepare: async (opts) => {
+    const promptPath = join2(
+      tmpdir2(),
+      `odw-grok-prompt-${randomBytes3(8).toString("hex")}.txt`
+    );
+    await writeFile4(promptPath, opts.prompt, { mode: 384 });
+    return {
+      args: buildGrokArgs(opts, promptPath),
+      env: grokChildEnv(),
+      cleanup: () => unlink2(promptPath).catch(() => {
+      })
+    };
+  },
+  parseLine: parseGrokStreamLine,
+  reduce: (events, ctx) => reduceGrok(events, ctx)
+});
+
 // src/mcp/server.ts
 import { realpath } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 var SERVER_INFO = {
   name: "open-dynamic-workflows",
-  version: "0.2.0"
+  version: "0.3.0"
 };
-var EXECUTORS = { codex: codexExecutor, zcode: zcodeExecutor };
+var EXECUTORS = { codex: codexExecutor, grok: grokExecutor, zcode: zcodeExecutor };
 var SANDBOX_META_KEY = "codex/sandbox-state-meta";
 var WORKFLOW_TOOL = {
   name: "workflow",
   description: [
-    "Execute a dynamic workflow script that orchestrates Codex or ZCode subagents deterministically.",
+    "Execute a dynamic workflow script that orchestrates Codex, Grok Build, or ZCode subagents deterministically.",
     "A dynamic workflow is plain JavaScript (NOT TypeScript) that orchestrates subagents at scale:",
     "the model writes the script, this tool runs it.",
     "",
@@ -8230,8 +8421,11 @@ var WORKFLOW_TOOL = {
     "  variables, spreads, or interpolation).",
     "- These globals are injected into scope: agent(prompt, {executor, ...}), parallel(thunks),",
     "  pipeline(items, ...stages), phase(title), log(message), args, workflow(ref, args?).",
-    "- Every agent() MUST name an executor: {executor:'codex'} or {executor:'zcode'}. There is",
-    "  no default; an unknown name fails the run.",
+    "- Every agent() MUST name an executor: {executor:'codex'}, {executor:'grok'}, or",
+    "  {executor:'zcode'}. There is no default; an unknown name fails the run.",
+    "- executor:'grok' is a headless Grok Build leaf (grok -p / --prompt-file, streaming-json).",
+    "  The grok binary is resolved from PATH; Grok Build machines typically have it at",
+    "  /home/box/.grok/bin (also $HOME/.grok/bin). Pin with GROK_BIN if needed.",
     "- Codex model overrides default reasoningEffort to 'medium'; set reasoningEffort explicitly",
     "  only when the selected model supports the requested value.",
     "- agent(prompt, {schema}) returns a validated object (schema root must be type:'object').",
@@ -8366,7 +8560,7 @@ async function runWorkflowTool(args, signal, sandboxCwd) {
       };
     }
   }
-  const cwd = requestedCwd || process.env.ZCODE_PROJECT_DIR || process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  const cwd = requestedCwd || process.env.ZCODE_PROJECT_DIR || process.env.CLAUDE_PROJECT_DIR || process.env.GROK_PROJECT_DIR || process.cwd();
   let result;
   try {
     result = await runWorkflow({
@@ -8536,5 +8730,5 @@ process.stdin.on("end", () => {
   for (const controller of activeCalls.values()) controller.abort();
   if (buffer.length) handleRaw(buffer.toString("utf8"));
 });
-process.stderr.write(`[odw] open-dynamic-workflows MCP server ready (executors: codex,zcode)
+process.stderr.write(`[odw] open-dynamic-workflows MCP server ready (executors: codex,grok,zcode)
 `);

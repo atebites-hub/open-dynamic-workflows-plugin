@@ -3,11 +3,10 @@
     "open-dynamic-workflows": {
       "type": "stdio",
       "command": "node",
-      "args": [
-        "${ZCODE_PLUGIN_ROOT}/dist/mcp/server.js"
-      ],
+      "args": ["./scripts/run-mcp.cjs"],
       "enabled": true,
-      "timeoutMs": 30000
+      "timeoutMs": 28800000,
+      "tool_timeout_sec": 28800
     }
   }
 }

@@ -1,11 +1,11 @@
 {
   "name": "open-dynamic-workflows",
-  "description": "Dynamic workflow orchestration for Codex and ZCode — fan a deterministic script out across many subagents. Provides a `workflow` tool, an authoring skill, and a `/workflows` command.",
+  "description": "Dynamic workflow orchestration for Grok Build, Codex, and ZCode — fan a deterministic script out across many subagents. Provides a `workflow` tool, an authoring skill, and a `/workflows` command.",
   "description_i18n": {
-    "en": "Dynamic workflow orchestration for Codex and ZCode — fan a deterministic script out across many subagents. Provides a `workflow` tool, an authoring skill, and a `/workflows` command.",
-    "zh-CN": "面向 Codex 和 ZCode 的动态工作流编排——把一段确定性脚本扇出成大量子 agent。提供 `workflow` 工具、编写 skill 和 `/workflows` 命令。"
+    "en": "Dynamic workflow orchestration for Grok Build, Codex, and ZCode — fan a deterministic script out across many subagents. Provides a `workflow` tool, an authoring skill, and a `/workflows` command.",
+    "zh-CN": "面向 Grok Build、Codex 和 ZCode 的动态工作流编排——把一段确定性脚本扇出成大量子 agent。提供 `workflow` 工具、编写 skill 和 `/workflows` 命令。"
   },
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": {
     "name": "Open Dynamic Workflows",
     "url": "https://github.com/atebites-hub/open-dynamic-workflows-plugin"
@@ -16,6 +16,7 @@
     "subagent",
     "fan-out",
     "parallel",
-    "dynamic-workflows"
+    "dynamic-workflows",
+    "grok-build"
   ]
 }

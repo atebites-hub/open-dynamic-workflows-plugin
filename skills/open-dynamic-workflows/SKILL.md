@@ -66,7 +66,7 @@ These are injected into the script scope:
   matching object and `agent()` resolves to the **validated object**. Returns `null` if the
   agent is skipped/aborted (filter with `.filter(Boolean)`). `opts`: `executor` (**required** —
   picks which agent CLI runs this node, by name, from the registry the host provides, e.g.
-  `'codex'` or `'zcode'`; an unknown name fails the run), `label` (short display label),
+  `'grok'`, `'codex'`, or `'zcode'`; an unknown name fails the run), `label` (short display label),
   `phase` (assign to a progress group — **use this inside parallel/pipeline stages**),
   `schema`, `model` (override; omit to inherit), `reasoningEffort` (Codex override; a model
   override defaults to `medium`), `isolation:'worktree'` (fresh git worktree —
@@ -95,8 +95,8 @@ Because `executor` is **per node**, one script can mix CLIs — e.g. have one CL
 different one review, when you want the verifier to be a different model from the author:
 
 ```js
-// Each agent() names its own CLI. This plugin registers 'codex' and 'zcode'.
-const draft = await agent('Draft a fix for this failing test.', { executor: 'zcode', label: 'draft' })
+// Each agent() names its own CLI. This plugin registers 'grok', 'codex', and 'zcode'.
+const draft = await agent('Draft a fix for this failing test.', { executor: 'grok', label: 'draft' })
 const review = await agent(`Independently review this fix — is it correct?\n\n${draft}`, {
   executor: 'codex', label: 'review', schema: VERDICT_SCHEMA,
 })
@@ -177,12 +177,12 @@ const DIMENSIONS = [
 
 const results = await pipeline(
   DIMENSIONS,
-  (d) => agent(d.prompt, { executor: 'codex', label: `review:${d.key}`, phase: 'Review', schema: FINDINGS_SCHEMA }),
+  (d) => agent(d.prompt, { executor: 'grok', label: `review:${d.key}`, phase: 'Review', schema: FINDINGS_SCHEMA }),
   (review) =>
     parallel(
       review.findings.map((f) => () =>
         agent(`Adversarially verify this finding — is it real? ${f.title}`, {
-          executor: 'codex', label: `verify:${f.file}`, phase: 'Verify', schema: VERDICT_SCHEMA,
+          executor: 'grok', label: `verify:${f.file}`, phase: 'Verify', schema: VERDICT_SCHEMA,
         }).then((v) => ({ ...f, verdict: v })),
       ),
     ),
@@ -205,21 +205,57 @@ structure — the example only teaches the primitives.
 
 ## How to RUN a workflow
 
-### Codex or ZCode plugin
+### Grok Build, Codex, or ZCode plugin
 
 Call the installed `workflow` tool with the script inline. Codex callers must pass the active
-workspace as an absolute `cwd`; the MCP server itself starts from the plugin install directory:
+workspace as an absolute `cwd`; the MCP server itself starts from the plugin install directory.
+Grok Build callers should pass `cwd` the same way (the plugin server is not started in the
+project). ZCode callers may omit `cwd` because the host supplies `ZCODE_PROJECT_DIR`.
 
 ```js
 workflow({
   cwd: '/absolute/path/to/project',
   script: "export const meta = { name: 'demo', description: 'one leaf' }\n" +
-    "return await agent('Reply with OK only.', { executor: 'codex' })",
+    "return await agent('Reply with OK only.', { executor: 'grok' })",
 })
 ```
 
-ZCode callers may omit `cwd` because the host supplies `ZCODE_PROJECT_DIR`. Every `agent()` still
-names its executor explicitly: this plugin registers `codex` and `zcode`.
+Every `agent()` still names its executor explicitly: this plugin registers `grok`, `codex`,
+and `zcode`.
+
+**Grok Build leaves (`executor: 'grok'`).** Each node is one headless Grok turn
+(`grok --prompt-file …`, the subprocess form of `grok -p`). Output is
+`--output-format streaming-json` because Grok's `json` format is pretty-printed and cannot
+be parsed line-by-line. The binary is resolved from `PATH`. On Grok Build studio machines
+the managed CLI lives at `/home/box/.grok/bin` (also `$HOME/.grok/bin`); the executor
+prepends those directories. Pin an explicit binary with `GROK_BIN`.
+
+Default leaf flags (appropriate for a subprocess, not a TUI):
+`--permission-mode acceptEdits --no-subagents --no-plan --no-memory --verbatim --no-auto-update`.
+Palemon Director seats that already bypass permissions can set
+`GROK_ODW_PERMISSION_MODE=bypassPermissions` and `GROK_ODW_ALWAYS_APPROVE=1` on the
+MCP server. Do not put secrets in the workflow script.
+
+**Fan-out across many grok leaves.** Prefer `pipeline()` so items do not wait on a barrier.
+A parent Director writes the script; each leaf is one focused grok turn:
+
+```js
+export const meta = { name: 'fan-grok-leaves', description: 'one grok leaf per item' }
+
+const results = await pipeline(
+  args.items,
+  (item) => agent(`Do the scoped work for ${item.id}. Return compact JSON.`, {
+    executor: 'grok', label: item.id, schema: ITEM_SCHEMA,
+  }),
+)
+return { results }
+```
+
+**Cursor Cloud Extra High is not an ODW executor.** From a Palemon parent Director, launch
+coding grunts with `scripts/launch-cloud-extra-high.sh` (auth from `CURSOR_API_KEY` or
+`~/.config/cursor/agent.env` on the machine — never print, never commit, never put in the
+script). Watch with `scripts/cloud/watch-cloud-agent.sh`. That path is sibling throughput,
+not a `workflow` leaf.
 
 ### Standalone runtime
 

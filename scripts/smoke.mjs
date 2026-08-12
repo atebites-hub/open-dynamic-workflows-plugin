@@ -32,6 +32,8 @@ const scratch = mkdtempSync(resolve(tmpdir(), "odw-smoke-"));
 const workflowCwd = mkdtempSync(resolve(tmpdir(), "odw-workflow-"));
 const fakeBin = mkdtempSync(resolve(tmpdir(), "odw-bin-"));
 const fakeCodex = resolve(fakeBin, "codex");
+const fakeGrok = resolve(fakeBin, "grok");
+const grokArgvOut = resolve(scratch, "grok-argv.json");
 const sandboxMeta = {
   "codex/sandbox-state-meta": { sandboxCwd: pathToFileURL(workflowCwd).href },
 };
@@ -50,6 +52,31 @@ process.stdin.on("end", () => {
 `,
 );
 chmodSync(fakeCodex, 0o755);
+writeFileSync(
+  fakeGrok,
+  `#!/usr/bin/env node
+const fs = require("node:fs")
+const args = process.argv.slice(2)
+if (process.env.SMOKE_GROK_ARGV) {
+  fs.writeFileSync(process.env.SMOKE_GROK_ARGV, JSON.stringify(args))
+}
+const fileIdx = args.indexOf("--prompt-file")
+const prompt = fileIdx >= 0 && args[fileIdx + 1] ? fs.readFileSync(args[fileIdx + 1], "utf8") : ""
+if (prompt.includes("WAIT_FOR_CANCEL")) {
+  setInterval(() => {}, 1000)
+  return
+}
+console.log(JSON.stringify({ type: "text", data: "ODW_FAKE_GROK_OK" }))
+console.log(JSON.stringify({
+  type: "end",
+  stopReason: "end_turn",
+  sessionId: "fake-grok-session",
+  usage: { input_tokens: 4, output_tokens: 2, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+  total_cost_usd: 0,
+}))
+`,
+);
+chmodSync(fakeGrok, 0o755);
 
 let passed = 0;
 let failed = 0;
@@ -72,6 +99,15 @@ const codexMcp = JSON.parse(readFileSync(resolve(root, ".codex-mcp.json"), "utf8
 const codexMarketplace = JSON.parse(
   readFileSync(resolve(root, ".agents", "plugins", "marketplace.json"), "utf8"),
 );
+const grokMarketplace = JSON.parse(
+  readFileSync(resolve(root, ".grok-plugin", "marketplace.json"), "utf8"),
+);
+const grokPlugin = JSON.parse(readFileSync(resolve(root, ".grok-plugin", "plugin.json"), "utf8"));
+const claudePlugin = JSON.parse(
+  readFileSync(resolve(root, ".claude-plugin", "plugin.json"), "utf8"),
+);
+const zcodeMarketplace = JSON.parse(readFileSync(resolve(root, "marketplace.json"), "utf8"));
+const mcpJson = JSON.parse(readFileSync(resolve(root, ".mcp.json"), "utf8"));
 
 expect("Codex manifest registers the skill and MCP server", () => {
   assert.equal(codexManifest.name, "open-dynamic-workflows");
@@ -90,6 +126,27 @@ expect("Codex marketplace exposes this repository as the plugin", () => {
   const plugin = codexMarketplace.plugins[0];
   assert.equal(plugin.name, "open-dynamic-workflows");
   assert.deepEqual(plugin.source, { source: "local", path: "./" });
+});
+expect("Grok marketplace lists this repo as an installable plugin", () => {
+  assert.equal(grokMarketplace.name, "open-dynamic-workflows");
+  const plugin = grokMarketplace.plugins[0];
+  assert.equal(plugin.name, "open-dynamic-workflows");
+  assert.deepEqual(plugin.source, { type: "local", path: "./" });
+  assert.ok(plugin.description.toLowerCase().includes("grok"));
+  assert.ok(plugin.keywords.includes("grok-build"));
+});
+expect("Grok and Claude plugin manifests advertise grok", () => {
+  assert.equal(grokPlugin.name, "open-dynamic-workflows");
+  assert.match(grokPlugin.description, /Grok Build/);
+  assert.match(claudePlugin.description, /Grok Build/);
+  assert.ok(zcodeMarketplace.description.toLowerCase().includes("grok"));
+});
+expect("MCP launch config is plugin-relative and long-running", () => {
+  const server = mcpJson.mcpServers["open-dynamic-workflows"];
+  assert.equal(server.command, "node");
+  assert.deepEqual(server.args, ["./scripts/run-mcp.cjs"]);
+  assert.ok(server.timeoutMs >= 28800000);
+  assert.ok(existsSync(resolve(root, "scripts", "run-mcp.cjs")));
 });
 
 // Send one JSON-RPC line per request, collect the framed responses. The server speaks
@@ -128,6 +185,8 @@ const proc = spawn(process.execPath, [serverPath], {
     ...process.env,
     ODW_REQUIRE_CWD: "1",
     PATH: `${fakeBin}${delimiter}${process.env.PATH ?? ""}`,
+    GROK_BIN: fakeGrok,
+    SMOKE_GROK_ARGV: grokArgvOut,
     ZCODE_PROJECT_DIR: scratch,
   },
   stdio: ["pipe", "pipe", "pipe"],
@@ -179,11 +238,13 @@ try {
     assert.equal(list.result.tools.length, 1);
     assert.equal(list.result.tools[0].name, "workflow");
   });
-  expect("workflow tool description mentions both bundled executors", () => {
+  expect("workflow tool description mentions all bundled executors", () => {
     const d = list.result.tools[0].description;
     assert.ok(d.includes("agent("));
     assert.ok(d.includes("executor:'codex'"));
+    assert.ok(d.includes("executor:'grok'"));
     assert.ok(d.includes("executor:'zcode'"));
+    assert.ok(d.includes("/home/box/.grok/bin"));
     assert.ok(d.includes("meta"));
   });
 
@@ -235,6 +296,41 @@ try {
     assert.equal(parsed.value, "ODW_FAKE_CODEX_OK");
     assert.equal(parsed.agentCount, 1);
     assert.equal(parsed.failedAgents, 0);
+  });
+
+  console.log("\n[smoke] tools/call workflow (Grok leaf through bundled executor)…");
+  framedWrite(proc, {
+    jsonrpc: "2.0",
+    id: 13,
+    method: "tools/call",
+    params: {
+      name: "workflow",
+      _meta: sandboxMeta,
+      arguments: {
+        cwd: workflowCwd,
+        script:
+          "export const meta = { name: 'grok-leaf', description: 'one fake Grok leaf' }\n" +
+          "return await agent('Reply with OK only.', { executor: 'grok', label: 'grok' })\n",
+      },
+    },
+  });
+  const grokCall = await waitForMessage((m) => m.id === 13, 30000);
+  expect("Grok leaf executes through the bundled registry", () => {
+    const parsed = JSON.parse(grokCall.result.content[0].text);
+    assert.equal(grokCall.result.isError, false);
+    assert.equal(parsed.value, "ODW_FAKE_GROK_OK");
+    assert.equal(parsed.agentCount, 1);
+    assert.equal(parsed.failedAgents, 0);
+  });
+  expect("Grok leaf uses headless subprocess flags", () => {
+    const argv = JSON.parse(readFileSync(grokArgvOut, "utf8"));
+    assert.ok(argv.includes("--prompt-file"));
+    assert.equal(argv[argv.indexOf("--output-format") + 1], "streaming-json");
+    assert.equal(argv[argv.indexOf("--permission-mode") + 1], "acceptEdits");
+    assert.ok(argv.includes("--no-subagents"));
+    assert.ok(argv.includes("--no-auto-update"));
+    assert.ok(argv.includes("--verbatim"));
+    assert.equal(argv[argv.indexOf("--cwd") + 1], workflowCwd);
   });
 
   console.log("\n[smoke] tools/call workflow (missing script + scriptPath → isError)");

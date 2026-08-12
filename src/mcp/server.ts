@@ -7,7 +7,7 @@
 // JSON-RPC），但它暴露的唯一工具运行 ODW 运行时：
 //
 //   workflow({ cwd?, script, args?, scriptPath?, resumeFromRunId? })
-//     → runWorkflow({ ..., executors: { codex: codexExecutor, zcode: zcodeExecutor } })
+//     → runWorkflow({ ..., executors: { codex, grok, zcode } })
 //     → { content:[{type:"text", text: JSON.stringify(result.value)}], isError: !result.ok }
 //
 // The tool's `description` is the authoring guide condensed — the model learns to
@@ -27,16 +27,17 @@ import {
   zcodeExecutor,
 } from "../../open-dynamic-workflows/dist/index.js";
 import type { WorkflowResult } from "../../open-dynamic-workflows/dist/index.js";
+import { grokExecutor } from "./grok.ts";
 import { realpath } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SERVER_INFO = {
   name: "open-dynamic-workflows",
-  version: "0.2.0",
+  version: "0.3.0",
 };
 
-const EXECUTORS = { codex: codexExecutor, zcode: zcodeExecutor };
+const EXECUTORS = { codex: codexExecutor, grok: grokExecutor, zcode: zcodeExecutor };
 const SANDBOX_META_KEY = "codex/sandbox-state-meta";
 
 // The tool's `description` IS the authoring contract — the model reads it to learn how
@@ -46,7 +47,7 @@ const SANDBOX_META_KEY = "codex/sandbox-state-meta";
 const WORKFLOW_TOOL = {
   name: "workflow",
   description: [
-    "Execute a dynamic workflow script that orchestrates Codex or ZCode subagents deterministically.",
+    "Execute a dynamic workflow script that orchestrates Codex, Grok Build, or ZCode subagents deterministically.",
     "A dynamic workflow is plain JavaScript (NOT TypeScript) that orchestrates subagents at scale:",
     "the model writes the script, this tool runs it.",
     "",
@@ -61,8 +62,11 @@ const WORKFLOW_TOOL = {
     "  variables, spreads, or interpolation).",
     "- These globals are injected into scope: agent(prompt, {executor, ...}), parallel(thunks),",
     "  pipeline(items, ...stages), phase(title), log(message), args, workflow(ref, args?).",
-    "- Every agent() MUST name an executor: {executor:'codex'} or {executor:'zcode'}. There is",
-    "  no default; an unknown name fails the run.",
+    "- Every agent() MUST name an executor: {executor:'codex'}, {executor:'grok'}, or",
+    "  {executor:'zcode'}. There is no default; an unknown name fails the run.",
+    "- executor:'grok' is a headless Grok Build leaf (grok -p / --prompt-file, streaming-json).",
+    "  The grok binary is resolved from PATH; Grok Build machines typically have it at",
+    "  /home/box/.grok/bin (also $HOME/.grok/bin). Pin with GROK_BIN if needed.",
     "- Codex model overrides default reasoningEffort to 'medium'; set reasoningEffort explicitly",
     "  only when the selected model supports the requested value.",
     "- agent(prompt, {schema}) returns a validated object (schema root must be type:'object').",
@@ -246,6 +250,7 @@ async function runWorkflowTool(
     requestedCwd ||
     process.env.ZCODE_PROJECT_DIR ||
     process.env.CLAUDE_PROJECT_DIR ||
+    process.env.GROK_PROJECT_DIR ||
     process.cwd();
 
   let result: WorkflowResult;
@@ -467,4 +472,4 @@ process.stdin.on("end", () => {
   if (buffer.length) handleRaw(buffer.toString("utf8"));
 });
 
-process.stderr.write(`[odw] open-dynamic-workflows MCP server ready (executors: codex,zcode)\n`);
+process.stderr.write(`[odw] open-dynamic-workflows MCP server ready (executors: codex,grok,zcode)\n`);

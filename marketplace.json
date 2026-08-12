@@ -1,9 +1,9 @@
 {
   "name": "open-dynamic-workflows",
-  "description": "Dynamic workflow orchestration for ZCode — fan a deterministic script out across many zcode subagents. A faithful, model-agnostic reimplementation of Claude Code's Workflow runtime, packaged as a ZCode plugin.",
+  "description": "Dynamic workflow orchestration for Grok Build, Codex, and ZCode — fan a deterministic script out across many CLI subagents. A faithful, model-agnostic reimplementation of Claude Code's Workflow runtime.",
   "description_i18n": {
-    "en": "Dynamic workflow orchestration for ZCode — fan a deterministic script out across many zcode subagents. A faithful, model-agnostic reimplementation of Claude Code's Workflow runtime, packaged as a ZCode plugin.",
-    "zh-CN": "面向 ZCode 的动态工作流编排——把一段确定性脚本扇出成大量 zcode 子 agent。Claude Code Workflow 运行时的忠实、模型无关的复刻，打包为 ZCode 插件。"
+    "en": "Dynamic workflow orchestration for Grok Build, Codex, and ZCode — fan a deterministic script out across many CLI subagents. A faithful, model-agnostic reimplementation of Claude Code's Workflow runtime.",
+    "zh-CN": "面向 Grok Build、Codex 和 ZCode 的动态工作流编排——把一段确定性脚本扇出成大量 CLI 子 agent。Claude Code Workflow 运行时的忠实、模型无关的复刻。"
   },
   "owner": {
     "name": "Open Dynamic Workflows",
@@ -13,10 +13,10 @@
     {
       "name": "open-dynamic-workflows",
       "source": "./",
-      "description": "Dynamic workflow orchestration for ZCode — fan a deterministic script out across many zcode subagents.",
+      "description": "Dynamic workflow orchestration for Grok Build, Codex, and ZCode — fan a deterministic script out across many CLI subagents.",
       "description_i18n": {
-        "en": "Dynamic workflow orchestration for ZCode — fan a deterministic script out across many zcode subagents.",
-        "zh-CN": "面向 ZCode 的动态工作流编排——把一段确定性脚本扇出成大量 zcode 子 agent。"
+        "en": "Dynamic workflow orchestration for Grok Build, Codex, and ZCode — fan a deterministic script out across many CLI subagents.",
+        "zh-CN": "面向 Grok Build、Codex 和 ZCode 的动态工作流编排——把一段确定性脚本扇出成大量 CLI 子 agent。"
       },
       "category": "developer-tools",
       "keywords": [
@@ -25,7 +25,10 @@
         "subagent",
         "fan-out",
         "parallel",
-        "dynamic-workflows"
+        "dynamic-workflows",
+        "grok-build",
+        "codex",
+        "zcode"
       ]
     }
   ],

@@ -1,0 +1,27 @@
+{
+  "name": "open-dynamic-workflows",
+  "description": "Dynamic workflow orchestration for Grok Build, Codex, and ZCode — fan a deterministic script out across many CLI subagents.",
+  "owner": {
+    "name": "Open Dynamic Workflows",
+    "email": "jaskarn.b@icloud.com"
+  },
+  "plugins": [
+    {
+      "name": "open-dynamic-workflows",
+      "description": "Dynamic workflow orchestration for Grok Build — fan a deterministic script out across many grok (also Codex / ZCode) subagents.",
+      "category": "developer-tools",
+      "version": "0.3.0",
+      "source": { "type": "local", "path": "./" },
+      "tags": ["workflow", "orchestration", "subagent", "fan-out", "grok", "codex", "zcode"],
+      "keywords": [
+        "workflow",
+        "orchestration",
+        "subagent",
+        "fan-out",
+        "parallel",
+        "dynamic-workflows",
+        "grok-build"
+      ]
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 {
   "name": "open-dynamic-workflows",
-  "version": "0.2.0",
-  "description": "Run deterministic JavaScript workflows across Codex or ZCode subagents.",
+  "version": "0.3.0",
+  "description": "Run deterministic JavaScript workflows across Grok Build, Codex, or ZCode subagents.",
   "author": {
     "name": "Open Dynamic Workflows",
     "url": "https://github.com/atebites-hub/open-dynamic-workflows-plugin"
@@ -9,7 +9,7 @@
   "homepage": "https://github.com/atebites-hub/open-dynamic-workflows-plugin",
   "repository": "https://github.com/atebites-hub/open-dynamic-workflows-plugin",
   "license": "MIT",
-  "keywords": ["workflow", "orchestration", "subagent", "codex"],
+  "keywords": ["workflow", "orchestration", "subagent", "codex", "grok", "zcode"],
   "skills": "./skills/",
   "mcpServers": "./.codex-mcp.json",
   "interface": {

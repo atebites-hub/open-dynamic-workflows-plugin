@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "plugins": {
+    "open-dynamic-workflows": {
+      "components": {
+        "skills": [
+          {
+            "name": "open-dynamic-workflows",
+            "description": "Author and run deterministic JavaScript workflows that fan out grok, Codex, or ZCode leaves."
+          }
+        ],
+        "commands": [
+          {
+            "name": "workflows",
+            "description": "List and resume Open Dynamic Workflows runs in this project."
+          }
+        ]
+      }
+    }
+  }
+}

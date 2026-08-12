@@ -21,5 +21,6 @@ Inspect the workflow runs in this project. Each workflow keeps its runs under `.
 - Do not modify anything under `.odw/*/runs/` — it is the durable record.
 - `.odw/*/runs/` is gitignored by convention; `.odw/*/script.js` is tracked.
 - If there are no `.odw/` workflows in this project, say so and suggest the `$open-dynamic-workflows` skill to author one.
+- On Grok Build, new scripts should prefer `{ executor: 'grok' }` for leaves unless the task explicitly needs Codex or ZCode.
 
 Optional arguments: $ARGUMENTS
