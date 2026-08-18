@@ -32,9 +32,60 @@ const scratch = mkdtempSync(resolve(tmpdir(), "odw-smoke-"));
 const workflowCwd = mkdtempSync(resolve(tmpdir(), "odw-workflow-"));
 const fakeBin = mkdtempSync(resolve(tmpdir(), "odw-bin-"));
 const fakeCodex = resolve(fakeBin, "codex");
+const fakeGrok = resolve(fakeBin, "grok");
+const fakeZcode = resolve(fakeBin, "zcode");
 const sandboxMeta = {
   "codex/sandbox-state-meta": { sandboxCwd: pathToFileURL(workflowCwd).href },
 };
+writeFileSync(
+  fakeGrok,
+  `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args.includes("--tools")) {
+  console.error("refusing --tools allowlist");
+  process.exit(2);
+}
+let format = "plain";
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === "--output-format") format = args[i + 1] || format;
+}
+if (format === "json") {
+  console.log(JSON.stringify({
+    text: "ODW_FAKE_GROK_OK",
+    stopReason: "end_turn",
+    sessionId: "fake-grok-session",
+    requestId: "fake-req",
+  }));
+} else {
+  console.log(JSON.stringify({ type: "text", data: "ODW_FAKE_GROK_OK" }));
+  console.log(JSON.stringify({
+    type: "end",
+    stopReason: "end_turn",
+    sessionId: "fake-grok-session",
+    requestId: "fake-req",
+  }));
+}
+`,
+);
+chmodSync(fakeGrok, 0o755);
+writeFileSync(
+  fakeZcode,
+  `#!/usr/bin/env node
+console.log(JSON.stringify({
+  type: "zcode_result",
+  text: "ODW_FAKE_ZCODE_OK",
+  stderr: "",
+  exitCode: 0,
+  sessionId: "fake-zcode-session",
+  costUsd: null,
+  inputTokens: null,
+  outputTokens: null,
+  totalTokens: null,
+  telemetryAvailable: false,
+}))
+`,
+);
+chmodSync(fakeZcode, 0o755);
 writeFileSync(
   fakeCodex,
   `#!/usr/bin/env node
@@ -90,6 +141,69 @@ expect("Codex marketplace exposes this repository as the plugin", () => {
   const plugin = codexMarketplace.plugins[0];
   assert.equal(plugin.name, "open-dynamic-workflows");
   assert.deepEqual(plugin.source, { source: "local", path: "./" });
+});
+
+const grokMarketplace = JSON.parse(
+  readFileSync(resolve(root, ".grok-plugin", "marketplace.json"), "utf8"),
+);
+const grokPlugin = JSON.parse(
+  readFileSync(resolve(root, ".grok-plugin", "plugin.json"), "utf8"),
+);
+const grokMcp = JSON.parse(
+  readFileSync(resolve(root, ".grok-plugin", "mcp.json"), "utf8"),
+);
+const rootMcp = JSON.parse(readFileSync(resolve(root, ".mcp.json"), "utf8"));
+
+expect("Grok marketplace names this plugin with a local source", () => {
+  const plugin = grokMarketplace.plugins[0];
+  assert.equal(plugin.name, "open-dynamic-workflows");
+  assert.deepEqual(plugin.source, {
+    type: "local",
+    path: "./plugins/open-dynamic-workflows",
+  });
+});
+expect("Grok marketplace plugin package has skill, command, and MCP bundle", () => {
+  const pkg = resolve(root, "plugins", "open-dynamic-workflows");
+  assert.ok(existsSync(resolve(pkg, ".grok-plugin", "plugin.json")));
+  assert.ok(existsSync(resolve(pkg, ".grok-plugin", "mcp.json")));
+  assert.ok(existsSync(resolve(pkg, "skills", "open-dynamic-workflows", "SKILL.md")));
+  assert.ok(existsSync(resolve(pkg, "commands", "workflows.md")));
+  assert.ok(existsSync(resolve(pkg, "dist", "mcp", "server.js")));
+});
+expect("Grok plugin manifest points at a Grok-resolvable MCP config", () => {
+  assert.equal(grokPlugin.name, "open-dynamic-workflows");
+  assert.equal(grokPlugin.mcpServers, "./.grok-plugin/mcp.json");
+});
+expect("Grok MCP launch uses GROK_PLUGIN_ROOT and a long tool timeout", () => {
+  const server = grokMcp.mcpServers["open-dynamic-workflows"];
+  const packaged = JSON.parse(
+    readFileSync(resolve(root, "plugins", "open-dynamic-workflows", ".grok-plugin", "mcp.json"), "utf8"),
+  ).mcpServers["open-dynamic-workflows"];
+  for (const cfg of [server, packaged]) {
+    assert.equal(cfg.command, "node");
+    assert.ok(
+      cfg.args.some((a) => String(a).includes("${GROK_PLUGIN_ROOT}")),
+      "Grok MCP args must expand GROK_PLUGIN_ROOT",
+    );
+    assert.ok(
+      !JSON.stringify(cfg).includes("${ZCODE_PLUGIN_ROOT}"),
+      "Grok MCP must not depend on ZCODE_PLUGIN_ROOT",
+    );
+    assert.ok(
+      !Object.hasOwn(cfg, "cwd"),
+      "Grok MCP must not pin cwd (inherit the session project, not GROK_PLUGIN_ROOT)",
+    );
+    assert.equal(cfg.tool_timeout_sec, 28800);
+    assert.equal(cfg.env.ODW_HOST, "grok");
+  }
+});
+expect("root ZCode MCP launch still uses ZCODE_PLUGIN_ROOT", () => {
+  const server = rootMcp.mcpServers["open-dynamic-workflows"];
+  assert.ok(server.args.some((a) => String(a).includes("${ZCODE_PLUGIN_ROOT}")));
+});
+expect("authoring skill and /workflows command are present", () => {
+  assert.ok(existsSync(resolve(root, "skills", "open-dynamic-workflows", "SKILL.md")));
+  assert.ok(existsSync(resolve(root, "commands", "workflows.md")));
 });
 
 // Send one JSON-RPC line per request, collect the framed responses. The server speaks
@@ -179,12 +293,18 @@ try {
     assert.equal(list.result.tools.length, 1);
     assert.equal(list.result.tools[0].name, "workflow");
   });
-  expect("workflow tool description mentions both bundled executors", () => {
+  expect("workflow tool description names zcode first and still names grok/codex", () => {
     const d = list.result.tools[0].description;
     assert.ok(d.includes("agent("));
+    assert.ok(d.includes("executor:'grok'"));
     assert.ok(d.includes("executor:'codex'"));
     assert.ok(d.includes("executor:'zcode'"));
     assert.ok(d.includes("meta"));
+    assert.match(d, /omits executor runs on zcode/);
+    const grokAt = d.indexOf("executor:'grok'");
+    const codexAt = d.indexOf("executor:'codex'");
+    const zcodeAt = d.indexOf("executor:'zcode'");
+    assert.ok(zcodeAt >= 0 && zcodeAt < grokAt && zcodeAt < codexAt);
   });
 
   console.log("\n[smoke] tools/call workflow (trivial script returning a value)…");
@@ -235,6 +355,53 @@ try {
     assert.equal(parsed.value, "ODW_FAKE_CODEX_OK");
     assert.equal(parsed.agentCount, 1);
     assert.equal(parsed.failedAgents, 0);
+  });
+
+  console.log("\n[smoke] tools/call workflow (Grok leaf through bundled executor)…");
+  framedWrite(proc, {
+    jsonrpc: "2.0",
+    id: 13,
+    method: "tools/call",
+    params: {
+      name: "workflow",
+      _meta: sandboxMeta,
+      arguments: {
+        cwd: workflowCwd,
+        script:
+          "export const meta = { name: 'grok-leaf', description: 'one fake Grok leaf' }\n" +
+          "return await agent('Reply with OK only.', { executor: 'grok', label: 'grok' })\n",
+      },
+    },
+  });
+  const grokCall = await waitForMessage((m) => m.id === 13, 30000);
+  expect("Grok leaf executes through the bundled registry", () => {
+    const parsed = JSON.parse(grokCall.result.content[0].text);
+    assert.equal(grokCall.result.isError, false);
+    assert.equal(parsed.value, "ODW_FAKE_GROK_OK");
+    assert.equal(parsed.agentCount, 1);
+    assert.equal(parsed.failedAgents, 0);
+  });
+
+  console.log("\n[smoke] Codex host still requires an explicit executor");
+  framedWrite(proc, {
+    jsonrpc: "2.0",
+    id: 14,
+    method: "tools/call",
+    params: {
+      name: "workflow",
+      _meta: sandboxMeta,
+      arguments: {
+        cwd: workflowCwd,
+        script:
+          "export const meta = { name: 'need-exec', description: 'omit executor' }\n" +
+          "return await agent('no executor on Codex host')\n",
+      },
+    },
+  });
+  const missingExec = await waitForMessage((m) => m.id === 14, 30000);
+  expect("Codex host omitted-executor still fails", () => {
+    assert.equal(missingExec.result.isError, true);
+    assert.match(missingExec.result.content[0].text, /executor/i);
   });
 
   console.log("\n[smoke] tools/call workflow (missing script + scriptPath → isError)");
@@ -391,6 +558,103 @@ expect("newline-delimited MCP clients receive a newline-delimited response", () 
   assert.equal(response.id, 12);
   assert.equal(response.result.serverInfo.name, "open-dynamic-workflows");
 });
+
+console.log("\n[smoke] Grok-host omit-cwd uses spawn cwd, not plugin root…");
+const grokProject = mkdtempSync(resolve(tmpdir(), "odw-grok-project-"));
+const grokHostEnv = {
+  ...process.env,
+  PATH: `${fakeBin}${delimiter}${process.env.PATH ?? ""}`,
+  GROK_PLUGIN_ROOT: root,
+  ODW_HOST: "grok",
+};
+delete grokHostEnv.ODW_REQUIRE_CWD;
+delete grokHostEnv.GROK_WORKSPACE_ROOT;
+delete grokHostEnv.ZCODE_PROJECT_DIR;
+delete grokHostEnv.CLAUDE_PROJECT_DIR;
+delete grokHostEnv.ZCODE_BIN;
+const grokHost = spawn(process.execPath, [serverPath], {
+  cwd: grokProject,
+  env: grokHostEnv,
+  stdio: ["pipe", "pipe", "pipe"],
+});
+let grokHostBuf = Buffer.alloc(0);
+const grokHostErr = [];
+grokHost.stdout.on("data", (c) => (grokHostBuf = Buffer.concat([grokHostBuf, c])));
+grokHost.stderr.on("data", (c) => grokHostErr.push(c.toString()));
+
+function grokHostWait(predicate, timeoutMs = 15000) {
+  return new Promise((resolveWait, rejectWait) => {
+    const t = setTimeout(() => rejectWait(new Error("timeout waiting for grok-host message")), timeoutMs);
+    const check = () => {
+      const { messages, rest } = readFramed(grokHostBuf);
+      const hit = messages.find(predicate);
+      if (hit) {
+        clearTimeout(t);
+        grokHost.stdout.off("data", check);
+        grokHostBuf = rest;
+        resolveWait(hit);
+      }
+    };
+    grokHost.stdout.on("data", check);
+    check();
+  });
+}
+
+function grokHostWrite(obj) {
+  const body = JSON.stringify(obj);
+  grokHost.stdin.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
+}
+
+try {
+  grokHostWrite({
+    jsonrpc: "2.0",
+    id: 20,
+    method: "initialize",
+    params: {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "grok-host-smoke", version: "0" },
+    },
+  });
+  await grokHostWait((m) => m.id === 20);
+  grokHostWrite({
+    jsonrpc: "2.0",
+    id: 21,
+    method: "tools/call",
+    params: {
+      name: "workflow",
+      arguments: {
+        script:
+          "export const meta = { name: 'host-default', description: 'omit executor on grok host' }\n" +
+          "return await agent('Reply with OK only.', { label: 'default-zcode' })\n",
+      },
+    },
+  });
+  const grokDefault = await grokHostWait((m) => m.id === 21, 30000);
+  expect("Grok host omitted-executor uses zcode", () => {
+    const parsed = JSON.parse(grokDefault.result.content[0].text);
+    assert.equal(grokDefault.result.isError, false);
+    assert.equal(parsed.value, "ODW_FAKE_ZCODE_OK");
+    assert.equal(parsed.agentCount, 1);
+  });
+  expect("Grok omit-cwd writes .odw into the session project, not the plugin root", () => {
+    const parsed = JSON.parse(grokDefault.result.content[0].text);
+    assert.ok(
+      existsSync(resolve(grokProject, ".odw", "host-default", "runs", parsed.runId)),
+      "artifacts must land under the Grok MCP spawn cwd (user project)",
+    );
+    assert.ok(
+      !existsSync(resolve(root, ".odw", "host-default", "runs", parsed.runId)),
+      "artifacts must not land under GROK_PLUGIN_ROOT",
+    );
+  });
+} catch (err) {
+  failed++;
+  console.error(`[smoke] grok-host fatal: ${err.message}`);
+  console.error(grokHostErr.join(""));
+} finally {
+  grokHost.kill();
+}
 
 console.log(`\n[smoke] ${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

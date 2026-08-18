@@ -22,7 +22,9 @@
 //（ODW + ajv 内联——运行时无需 node_modules，与所有其它 zcode 插件一致）。
 
 import {
+  claudeExecutor,
   codexExecutor,
+  grokExecutor,
   runWorkflow,
   zcodeExecutor,
 } from "../../open-dynamic-workflows/dist/index.js";
@@ -30,14 +32,22 @@ import type { WorkflowResult } from "../../open-dynamic-workflows/dist/index.js"
 import { realpath } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isGrokHost } from "./host.js";
 
 const SERVER_INFO = {
   name: "open-dynamic-workflows",
   version: "0.2.0",
 };
 
-const EXECUTORS = { codex: codexExecutor, zcode: zcodeExecutor };
+const EXECUTORS = {
+  zcode: zcodeExecutor,
+  grok: grokExecutor,
+  claude: claudeExecutor,
+  codex: codexExecutor,
+};
 const SANDBOX_META_KEY = "codex/sandbox-state-meta";
+const GROK_HOSTED = isGrokHost();
+const NESTED_GROK_LEAF = process.env.ODW_GROK_LEAF === "1";
 
 // The tool's `description` IS the authoring contract — the model reads it to learn how
 // to write a workflow script. Keep it aligned with skills/open-dynamic-workflows/SKILL.md.
@@ -46,7 +56,7 @@ const SANDBOX_META_KEY = "codex/sandbox-state-meta";
 const WORKFLOW_TOOL = {
   name: "workflow",
   description: [
-    "Execute a dynamic workflow script that orchestrates Codex or ZCode subagents deterministically.",
+    "Execute a dynamic workflow script that orchestrates Grok, Claude, Codex, or ZCode subagents deterministically.",
     "A dynamic workflow is plain JavaScript (NOT TypeScript) that orchestrates subagents at scale:",
     "the model writes the script, this tool runs it.",
     "",
@@ -61,8 +71,10 @@ const WORKFLOW_TOOL = {
     "  variables, spreads, or interpolation).",
     "- These globals are injected into scope: agent(prompt, {executor, ...}), parallel(thunks),",
     "  pipeline(items, ...stages), phase(title), log(message), args, workflow(ref, args?).",
-    "- Every agent() MUST name an executor: {executor:'codex'} or {executor:'zcode'}. There is",
-    "  no default; an unknown name fails the run.",
+    "- Named workers: {executor:'zcode'}, {executor:'grok'}, {executor:'claude'}, {executor:'codex'}.",
+    "  Prefer zcode (zcode-cli) first. When this plugin is hosted by Grok Build, an agent() that",
+    "  omits executor runs on zcode. On Codex or ZCode there is no default; every agent() must",
+    "  name an executor. An unknown name fails the run.",
     "- Codex model overrides default reasoningEffort to 'medium'; set reasoningEffort explicitly",
     "  only when the selected model supports the requested value.",
     "- agent(prompt, {schema}) returns a validated object (schema root must be type:'object').",
@@ -96,7 +108,7 @@ const WORKFLOW_TOOL = {
         type: "string",
         minLength: 1,
         description:
-          "Absolute project directory used for workflow artifacts and subagents. Required from Codex callers.",
+          "Absolute project directory used for workflow artifacts and subagents. Required from Codex callers. Grok and ZCode may omit it (host project dir is used).",
       },
       script: {
         type: "string",
@@ -120,7 +132,7 @@ const WORKFLOW_TOOL = {
   },
 };
 
-const TOOLS = [WORKFLOW_TOOL];
+const TOOLS = NESTED_GROK_LEAF ? [] : [WORKFLOW_TOOL];
 const activeCalls = new Map<number | string, AbortController>();
 let responseFraming: "content-length" | "line" = "content-length";
 
@@ -177,6 +189,18 @@ async function runWorkflowTool(
         {
           type: "text",
           text: "workflow tool requires either `script` (inline source) or `scriptPath` (path to a file).",
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  if (NESTED_GROK_LEAF) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: "Nested grok leaves cannot start another workflow (ODW_GROK_LEAF=1).",
         },
       ],
       isError: true,
@@ -242,6 +266,9 @@ async function runWorkflowTool(
     }
   }
 
+  // Grok plugin MCP inherits the session project as process.cwd() — mcp.json must
+  // not pin cwd to GROK_PLUGIN_ROOT (that writes .odw into the install dir).
+  // GROK_WORKSPACE_ROOT is hook-only and is not set on the MCP process.
   const cwd =
     requestedCwd ||
     process.env.ZCODE_PROJECT_DIR ||
@@ -257,6 +284,7 @@ async function runWorkflowTool(
       ...(resumeFromRunId !== undefined ? { resumeFromRunId } : {}),
       cwd,
       executors: EXECUTORS,
+      ...(GROK_HOSTED ? { defaultExecutor: "zcode" } : {}),
       ...(signal !== undefined ? { signal } : {}),
       onEvent: (event) => {
         // Stream one-line progress to stderr so a long run isn't opaque. The MCP protocol
@@ -467,4 +495,6 @@ process.stdin.on("end", () => {
   if (buffer.length) handleRaw(buffer.toString("utf8"));
 });
 
-process.stderr.write(`[odw] open-dynamic-workflows MCP server ready (executors: codex,zcode)\n`);
+process.stderr.write(
+  `[odw] open-dynamic-workflows MCP server ready (executors: zcode,grok,claude,codex${GROK_HOSTED ? "; default=zcode" : ""})\n`,
+);

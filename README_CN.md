@@ -1,13 +1,23 @@
-# open-dynamic-workflows（Codex + ZCode 插件）
+# open-dynamic-workflows（Grok Build + Codex + ZCode 插件）
 
 [English](./README.md)
 
-面向 **Codex 和 ZCode** 的动态工作流编排——通过原生 `workflow` 工具和编写 skill，
+面向 **Grok Build、Codex 和 ZCode** 的动态工作流编排——通过原生 `workflow` 工具和编写 skill，
 把一段确定性 JavaScript 脚本扇出成大量 CLI 子 agent。
 
 一段动态工作流就是**编排大量子 agent 的纯 JS 脚本**。模型为任务编写脚本；插件内置的
-运行时执行它，把每个 `agent()` 调用扇出成一个真实的 `codex` 或 `zcode` 子进程。控制流（循环、分支、
-扇出）在确定性 JS 里——LLM 的活只发生在叶子节点。
+运行时执行它，把每个 `agent()` 调用扇出成一个真实的 `grok`、`claude`、`codex` 或 `zcode`
+子进程。控制流（循环、分支、扇出）在确定性 JS 里——LLM 的活只发生在叶子节点。
+
+## 安装（Grok Build）
+
+```bash
+grok plugin marketplace add atebites-hub/open-dynamic-workflows-plugin
+grok plugin install open-dynamic-workflows --trust
+```
+
+新开一个 Grok 会话（或在 Plugins 标签按 `r`）。zcode（zcode-cli）是默认 worker：未指名
+executor 的 `agent()` 跑在 `zcode` 上。插件是自包含的，无需在项目中检出或构建 ODW。
 
 ## 安装（Codex）
 
@@ -42,9 +52,11 @@ codex plugin add open-dynamic-workflows@open-dynamic-workflows
 模型编写一段 JS 工作流脚本
   └─ 调用 workflow({ cwd, script })
       └─ 插件的 MCP server（dist/mcp/server.js）
-          └─ ODW 运行时：runWorkflow({ executors: { codex, zcode } })
+          └─ ODW 运行时：runWorkflow({ executors: { zcode, grok, claude, codex } })
+              ├─ agent({executor:'zcode'})（Grok 托管时可省略）spawn `zcode --prompt …`
+              ├─ agent({executor:'grok'}) spawn `grok -p …`
+              ├─ agent({executor:'claude'}) spawn `claude --print …`
               ├─ agent({executor:'codex'}) spawn `codex exec --json …`
-              ├─ agent({executor:'zcode'}) spawn `zcode --prompt …`（ZCODE_ODW_PROTOCOL=1）
               ├─ parallel()/pipeline() 负责编排，journal 持久化结果
               └─ 返回脚本的 `return` 值 + run 元数据
 ```
@@ -74,13 +86,18 @@ return { results }
 
 ## 仓库结构
 
-本仓库**既是 marketplace 也是插件**（`marketplace.json` 用 `"source": "./"`）。
+本仓库**既是 marketplace 也是插件**（Grok 的 `.grok-plugin/marketplace.json` 与 ZCode 的
+`marketplace.json` 都用本地 `./` 源）。
 
 ```
-├── marketplace.json                # marketplace 清单（本仓库 = 插件）
+├── .grok-plugin/marketplace.json   # Grok marketplace 目录
+├── .grok-plugin/plugin.json        # Grok 插件清单
+├── .grok-plugin/mcp.json           # Grok MCP 启动配置（GROK_PLUGIN_ROOT）
+├── plugins/open-dynamic-workflows/ # Grok marketplace 安装包（Grok 拒绝 source "./"）
+├── marketplace.json                # ZCode marketplace 清单
 ├── .zcode-plugin/plugin.json       # ZCode 插件清单
 ├── .claude-plugin/plugin.json      # Claude Code 兼容镜像
-├── .mcp.json                       # 声明 stdio MCP server
+├── .mcp.json                       # ZCode stdio MCP（${ZCODE_PLUGIN_ROOT}）
 ├── skills/open-dynamic-workflows/  # 编写 skill（从 ODW 引入）
 ├── commands/workflows.md           # /workflows 斜杠命令
 ├── src/mcp/server.ts               # MCP server 源码（`workflow` 工具）
@@ -106,8 +123,8 @@ npm run verify   # 重新打包并运行插件冒烟检查
 
 ## 说明 / 范围（v0.2）
 
-- **Codex 和 ZCode worker。** 插件注册两个执行器；每个 `agent()` 仍须显式指定一个。
-  未知名称会立即失败。
+- **ZCode、Grok、Claude 和 Codex worker。** 插件注册四个执行器。在 Grok Build 上，省略
+  `executor` 默认走 zcode（zcode-cli）。Codex 和 ZCode 仍须显式指定。未知名称会立即失败。
 - **同步工具。** `workflow()` 运行到完成再返回（v1）。带 task 通知的后台执行是 v2 增强。
 - **本地证据。** `.odw/` 产物包含工作流脚本、prompt 和 agent 响应；新建的 run 文件仅 owner
   可读写。请保持 `.odw/` 被 gitignore。

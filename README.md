@@ -1,14 +1,25 @@
-# open-dynamic-workflows (Codex + ZCode plugin)
+# open-dynamic-workflows (Grok Build + Codex + ZCode plugin)
 
 [中文文档](./README_CN.md)
 
-Dynamic workflow orchestration for **Codex and ZCode** — fan a deterministic JavaScript script
-out across many CLI subagents through a native `workflow` tool and authoring skill.
+Dynamic workflow orchestration for **Grok Build, Codex, and ZCode** — fan a deterministic
+JavaScript script out across many CLI subagents through a native `workflow` tool and authoring skill.
 
 A dynamic workflow is a **plain-JS script that orchestrates subagents at scale**. The model
 writes the script for the task; the plugin's bundled runtime executes it, fanning each
-`agent()` call out to a real `codex` or `zcode` subprocess. The control flow (loops, branching, fan-out)
-lives in deterministic JS — the LLM work happens only at the leaves.
+`agent()` call out to a real `grok`, `claude`, `codex`, or `zcode` subprocess. The control flow
+(loops, branching, fan-out) lives in deterministic JS — the LLM work happens only at the leaves.
+
+## Install (Grok Build)
+
+```bash
+grok plugin marketplace add atebites-hub/open-dynamic-workflows-plugin
+grok plugin install open-dynamic-workflows --trust
+```
+
+Open a new Grok session (or press `r` in the Plugins tab). zcode (zcode-cli) is the default
+worker: an `agent()` that does not name another executor runs on `zcode`. The plugin is
+self-contained; no project-local ODW checkout or build is needed.
 
 ## Install (Codex)
 
@@ -44,28 +55,32 @@ After install, a session gets:
 model writes a JS workflow script
   └─ calls workflow({ cwd, script })
       └─ plugin's MCP server (dist/mcp/server.js)
-          └─ ODW runtime: runWorkflow({ executors: { codex, zcode } })
+          └─ ODW runtime: runWorkflow({ executors: { zcode, grok, claude, codex } })
+              ├─ agent({executor:'zcode'}) (or omitted on Grok host) spawns `zcode --prompt …`
+              ├─ agent({executor:'grok'}) spawns `grok -p …`
+              ├─ agent({executor:'claude'}) spawns `claude --print …`
               ├─ agent({executor:'codex'}) spawns `codex exec --json …`
-              ├─ agent({executor:'zcode'}) spawns `zcode --prompt …` (ZCODE_ODW_PROTOCOL=1)
               ├─ parallel()/pipeline() orchestrate, journal persists results
               └─ returns the script's `return` value + run metadata
 ```
 
-Both executors use the user's installed CLI from `PATH`. Codex verifies `cwd` against the active
-workspace metadata supplied by the host, then runs with JSONL output and a `workspace-write`
-sandbox. Its native shell policy removes key/secret/token variables from model-run commands.
+Each executor uses the user's installed CLI from `PATH` (`GROK_BIN` / `ZCODE_BIN` override the
+binary). Grok runs headless `grok -p` with `--output-format json` or `streaming-json`,
+`--always-approve`, and `--sandbox workspace` — never the broken `--tools` allowlist. Nested
+grok leaves do not reload this plugin's MCP. Codex verifies `cwd` against the active workspace
+metadata supplied by the host, then runs with JSONL output and a `workspace-write` sandbox.
 ZCode uses `ZCODE_ODW_PROTOCOL=1`. Each agent is one real model turn. A Codex model override
-defaults to `medium` reasoning unless the node supplies `reasoningEffort`, avoiding incompatible
-user-level settings. Completed agents replay from the journal with zero token spend.
+defaults to `medium` reasoning unless the node supplies `reasoningEffort`. Completed agents
+replay from the journal with zero token spend.
 
 ## A minimal workflow
 
 ```js
-export const meta = { name: 'demo', description: 'two parallel codex agents' }
+export const meta = { name: 'demo', description: 'two parallel grok agents' }
 
 const results = await parallel([
-  () => agent('What is 2+2? Reply with just the number.', { executor: 'codex', label: 'math' }),
-  () => agent('Name a red planet. One word.', { executor: 'codex', label: 'trivia' }),
+  () => agent('What is 2+2? Reply with just the number.', { executor: 'grok', label: 'math' }),
+  () => agent('Name a red planet. One word.', { executor: 'grok', label: 'trivia' }),
 ])
 return { results }
 ```
@@ -78,16 +93,20 @@ the pipeline-vs-parallel decision, adversarial-verify / judge-panel / loop-until
 
 ## Repository layout
 
-This repo is both the Codex and ZCode marketplace and the plugin.
+This repo is the Grok, Codex, and ZCode marketplace and the plugin.
 
 ```
+├── .grok-plugin/marketplace.json   # Grok marketplace catalog
+├── .grok-plugin/plugin.json        # Grok plugin manifest (repo-as-plugin / grok plugin install .)
+├── .grok-plugin/mcp.json           # Grok MCP launch (GROK_PLUGIN_ROOT, 8h tool timeout)
+├── plugins/open-dynamic-workflows/ # Grok marketplace package (catalog source; Grok rejects "./")
 ├── .agents/plugins/marketplace.json # Codex marketplace manifest
 ├── .codex-plugin/plugin.json       # Codex plugin manifest
 ├── .codex-mcp.json                 # Codex MCP launch config
 ├── marketplace.json                # ZCode marketplace manifest
 ├── .zcode-plugin/plugin.json       # ZCode plugin manifest
 ├── .claude-plugin/plugin.json      # Claude Code compatibility mirror
-├── .mcp.json                       # declares the stdio MCP server
+├── .mcp.json                       # ZCode stdio MCP server (${ZCODE_PLUGIN_ROOT})
 ├── skills/open-dynamic-workflows/  # authoring skill (vendored from ODW)
 ├── commands/workflows.md           # /workflows slash command
 ├── src/mcp/server.ts               # MCP server source (the `workflow` tool)
@@ -115,8 +134,9 @@ users.
 
 ## Notes / scope (v0.2)
 
-- **Codex and ZCode workers.** The plugin registers both executors; every `agent()` still names
-  one explicitly. Unknown names fail fast.
+- **ZCode, Grok, Claude, and Codex workers.** The plugin registers all four. On Grok Build,
+  omitted `executor` defaults to zcode (zcode-cli). Codex and ZCode still require an explicit
+  executor. Unknown names fail fast.
 - **Synchronous tool.** `workflow()` runs to completion and returns (v1). Background execution
   with task notifications is a v2 enhancement.
 - **Local evidence.** `.odw/` artifacts contain workflow scripts, prompts, and agent responses;

@@ -16,7 +16,7 @@
 // Run: `node scripts/build.mjs` (after `npm ci --ignore-scripts` for esbuild).
 // Also run via `npm run setup`, which chains submodule init + install + this build.
 
-import { chmod, mkdir, rm } from "node:fs/promises";
+import { chmod, cp, mkdir, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { build } from "esbuild";
@@ -72,3 +72,15 @@ await build({
 
 await chmod(serverOutputPath, 0o755);
 console.log(`[build] done → ${serverOutputPath}`);
+
+// Grok marketplace entries cannot use source "./" (empty path). Sync the
+// installable plugin package under plugins/open-dynamic-workflows/.
+const grokPluginDir = resolve(root, "plugins", "open-dynamic-workflows");
+console.log("[build] sync Grok marketplace plugin package…");
+await rm(resolve(grokPluginDir, "dist"), { recursive: true, force: true });
+await rm(resolve(grokPluginDir, "skills"), { recursive: true, force: true });
+await rm(resolve(grokPluginDir, "commands"), { recursive: true, force: true });
+await cp(resolve(root, "dist"), resolve(grokPluginDir, "dist"), { recursive: true });
+await cp(resolve(root, "skills"), resolve(grokPluginDir, "skills"), { recursive: true });
+await cp(resolve(root, "commands"), resolve(grokPluginDir, "commands"), { recursive: true });
+console.log(`[build] grok plugin package → ${grokPluginDir}`);
