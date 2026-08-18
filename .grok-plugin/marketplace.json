@@ -1,0 +1,26 @@
+{
+  "name": "open-dynamic-workflows",
+  "description": "Dynamic workflow orchestration for Grok Build, Codex, and ZCode — fan a deterministic script out across many CLI subagents.",
+  "owner": {
+    "name": "Open Dynamic Workflows",
+    "url": "https://github.com/atebites-hub/open-dynamic-workflows-plugin"
+  },
+  "plugins": [
+    {
+      "name": "open-dynamic-workflows",
+      "description": "Dynamic workflow orchestration — fan a deterministic script out across grok, claude, codex, and zcode subagents. Provides a workflow MCP tool, an authoring skill, and a /workflows command.",
+      "category": "developer-tools",
+      "source": { "type": "local", "path": "./plugins/open-dynamic-workflows" },
+      "keywords": [
+        "workflow",
+        "orchestration",
+        "subagent",
+        "fan-out",
+        "parallel",
+        "dynamic-workflows",
+        "grok"
+      ]
+    }
+  ],
+  "version": 1
+}
