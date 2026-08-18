@@ -17,9 +17,8 @@ grok plugin marketplace add atebites-hub/open-dynamic-workflows-plugin
 grok plugin install open-dynamic-workflows --trust
 ```
 
-Open a new Grok session (or press `r` in the Plugins tab). zcode (zcode-cli) is the default
-worker: an `agent()` that does not name another executor runs on `zcode`. The plugin is
-self-contained; no project-local ODW checkout or build is needed.
+Open a new Grok session (or press `r` in the Plugins tab). Omitted `executor` runs on `grok`.
+The plugin is self-contained; no project-local ODW checkout or build is needed.
 
 ## Install (Codex)
 
@@ -56,8 +55,8 @@ model writes a JS workflow script
   └─ calls workflow({ cwd, script })
       └─ plugin's MCP server (dist/mcp/server.js)
           └─ ODW runtime: runWorkflow({ executors: { zcode, grok, claude, codex } })
-              ├─ agent({executor:'zcode'}) (or omitted on Grok host) spawns `zcode --prompt …`
-              ├─ agent({executor:'grok'}) spawns `grok -p …`
+              ├─ agent({executor:'zcode'}) (or omitted on ZCode) spawns `zcode --prompt …`
+              ├─ agent({executor:'grok'}) (or omitted on Grok Build) spawns `grok -p …`
               ├─ agent({executor:'claude'}) spawns `claude --print …`
               ├─ agent({executor:'codex'}) spawns `codex exec --json …`
               ├─ parallel()/pipeline() orchestrate, journal persists results
@@ -134,9 +133,8 @@ users.
 
 ## Notes / scope (v0.2)
 
-- **ZCode, Grok, Claude, and Codex workers.** The plugin registers all four. On Grok Build,
-  omitted `executor` defaults to zcode (zcode-cli). Codex and ZCode still require an explicit
-  executor. Unknown names fail fast.
+- **Host-native default worker.** Omitted `executor` uses grok on Grok Build, zcode on ZCode,
+  codex on Codex, claude on Claude Code. Name another worker to override. Unknown names fail fast.
 - **Synchronous tool.** `workflow()` runs to completion and returns (v1). Background execution
   with task notifications is a v2 enhancement.
 - **Local evidence.** `.odw/` artifacts contain workflow scripts, prompts, and agent responses;

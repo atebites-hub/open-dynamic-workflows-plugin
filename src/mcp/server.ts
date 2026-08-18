@@ -32,7 +32,7 @@ import type { WorkflowResult } from "../../open-dynamic-workflows/dist/index.js"
 import { realpath } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isGrokHost } from "./host.js";
+import { defaultExecutorForHost } from "./host.js";
 
 const SERVER_INFO = {
   name: "open-dynamic-workflows",
@@ -46,7 +46,7 @@ const EXECUTORS = {
   codex: codexExecutor,
 };
 const SANDBOX_META_KEY = "codex/sandbox-state-meta";
-const GROK_HOSTED = isGrokHost();
+const DEFAULT_EXECUTOR = defaultExecutorForHost();
 const NESTED_GROK_LEAF = process.env.ODW_GROK_LEAF === "1";
 
 // The tool's `description` IS the authoring contract — the model reads it to learn how
@@ -72,9 +72,9 @@ const WORKFLOW_TOOL = {
     "- These globals are injected into scope: agent(prompt, {executor, ...}), parallel(thunks),",
     "  pipeline(items, ...stages), phase(title), log(message), args, workflow(ref, args?).",
     "- Named workers: {executor:'zcode'}, {executor:'grok'}, {executor:'claude'}, {executor:'codex'}.",
-    "  Prefer zcode (zcode-cli) first. When this plugin is hosted by Grok Build, an agent() that",
-    "  omits executor runs on zcode. On Codex or ZCode there is no default; every agent() must",
-    "  name an executor. An unknown name fails the run.",
+    "  When executor is omitted, the host CLI is used: grok on Grok Build, zcode on ZCode,",
+    "  codex on Codex, claude on Claude Code. Name another worker to override. An unknown",
+    "  name fails the run.",
     "- Codex model overrides default reasoningEffort to 'medium'; set reasoningEffort explicitly",
     "  only when the selected model supports the requested value.",
     "- agent(prompt, {schema}) returns a validated object (schema root must be type:'object').",
@@ -284,7 +284,7 @@ async function runWorkflowTool(
       ...(resumeFromRunId !== undefined ? { resumeFromRunId } : {}),
       cwd,
       executors: EXECUTORS,
-      ...(GROK_HOSTED ? { defaultExecutor: "zcode" } : {}),
+      ...(DEFAULT_EXECUTOR !== undefined ? { defaultExecutor: DEFAULT_EXECUTOR } : {}),
       ...(signal !== undefined ? { signal } : {}),
       onEvent: (event) => {
         // Stream one-line progress to stderr so a long run isn't opaque. The MCP protocol
@@ -496,5 +496,5 @@ process.stdin.on("end", () => {
 });
 
 process.stderr.write(
-  `[odw] open-dynamic-workflows MCP server ready (executors: zcode,grok,claude,codex${GROK_HOSTED ? "; default=zcode" : ""})\n`,
+  `[odw] open-dynamic-workflows MCP server ready (executors: zcode,grok,claude,codex${DEFAULT_EXECUTOR ? `; default=${DEFAULT_EXECUTOR}` : ""})\n`,
 );

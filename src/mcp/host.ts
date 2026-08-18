@@ -1,9 +1,24 @@
 // Host detection for the plugin MCP server.
-// Grok is the default worker only when this process is hosted by Grok Build.
-// Codex sets ODW_REQUIRE_CWD=1 and keeps the fail-fast "executor required" rule.
+// Each host defaults omitted agent() calls to its own CLI. Explicit ODW_HOST
+// wins; otherwise infer from plugin-root / Codex cwd-requirement env.
+// Grok also sets CLAUDE_PLUGIN_ROOT as an alias, so GROK_PLUGIN_ROOT is checked first.
+
+export type HostExecutor = "grok" | "zcode" | "codex" | "claude";
+
+const NAMED_HOSTS = new Set<string>(["grok", "zcode", "codex", "claude"]);
+
+export function defaultExecutorForHost(
+  env: NodeJS.ProcessEnv = process.env,
+): HostExecutor | undefined {
+  const named = env.ODW_HOST?.trim();
+  if (named && NAMED_HOSTS.has(named)) return named as HostExecutor;
+  if (env.ODW_REQUIRE_CWD === "1") return "codex";
+  if (env.GROK_PLUGIN_ROOT?.trim()) return "grok";
+  if (env.ZCODE_PLUGIN_ROOT?.trim()) return "zcode";
+  if (env.CLAUDE_PLUGIN_ROOT?.trim()) return "claude";
+  return undefined;
+}
 
 export function isGrokHost(env: NodeJS.ProcessEnv = process.env): boolean {
-  if (env.ODW_REQUIRE_CWD === "1") return false;
-  if (env.ODW_HOST === "grok") return true;
-  return Boolean(env.GROK_PLUGIN_ROOT?.trim());
+  return defaultExecutorForHost(env) === "grok";
 }

@@ -8458,10 +8458,15 @@ import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/mcp/host.ts
-function isGrokHost(env = process.env) {
-  if (env.ODW_REQUIRE_CWD === "1") return false;
-  if (env.ODW_HOST === "grok") return true;
-  return Boolean(env.GROK_PLUGIN_ROOT?.trim());
+var NAMED_HOSTS = /* @__PURE__ */ new Set(["grok", "zcode", "codex", "claude"]);
+function defaultExecutorForHost(env = process.env) {
+  const named = env.ODW_HOST?.trim();
+  if (named && NAMED_HOSTS.has(named)) return named;
+  if (env.ODW_REQUIRE_CWD === "1") return "codex";
+  if (env.GROK_PLUGIN_ROOT?.trim()) return "grok";
+  if (env.ZCODE_PLUGIN_ROOT?.trim()) return "zcode";
+  if (env.CLAUDE_PLUGIN_ROOT?.trim()) return "claude";
+  return void 0;
 }
 
 // src/mcp/server.ts
@@ -8476,7 +8481,7 @@ var EXECUTORS = {
   codex: codexExecutor
 };
 var SANDBOX_META_KEY = "codex/sandbox-state-meta";
-var GROK_HOSTED = isGrokHost();
+var DEFAULT_EXECUTOR = defaultExecutorForHost();
 var NESTED_GROK_LEAF = process.env.ODW_GROK_LEAF === "1";
 var WORKFLOW_TOOL = {
   name: "workflow",
@@ -8497,9 +8502,9 @@ var WORKFLOW_TOOL = {
     "- These globals are injected into scope: agent(prompt, {executor, ...}), parallel(thunks),",
     "  pipeline(items, ...stages), phase(title), log(message), args, workflow(ref, args?).",
     "- Named workers: {executor:'zcode'}, {executor:'grok'}, {executor:'claude'}, {executor:'codex'}.",
-    "  Prefer zcode (zcode-cli) first. When this plugin is hosted by Grok Build, an agent() that",
-    "  omits executor runs on zcode. On Codex or ZCode there is no default; every agent() must",
-    "  name an executor. An unknown name fails the run.",
+    "  When executor is omitted, the host CLI is used: grok on Grok Build, zcode on ZCode,",
+    "  codex on Codex, claude on Claude Code. Name another worker to override. An unknown",
+    "  name fails the run.",
     "- Codex model overrides default reasoningEffort to 'medium'; set reasoningEffort explicitly",
     "  only when the selected model supports the requested value.",
     "- agent(prompt, {schema}) returns a validated object (schema root must be type:'object').",
@@ -8655,7 +8660,7 @@ async function runWorkflowTool(args, signal, sandboxCwd) {
       ...resumeFromRunId !== void 0 ? { resumeFromRunId } : {},
       cwd,
       executors: EXECUTORS,
-      ...GROK_HOSTED ? { defaultExecutor: "zcode" } : {},
+      ...DEFAULT_EXECUTOR !== void 0 ? { defaultExecutor: DEFAULT_EXECUTOR } : {},
       ...signal !== void 0 ? { signal } : {},
       onEvent: (event) => {
         process.stderr.write(`[odw] ${event.type}
@@ -8817,6 +8822,6 @@ process.stdin.on("end", () => {
   if (buffer.length) handleRaw(buffer.toString("utf8"));
 });
 process.stderr.write(
-  `[odw] open-dynamic-workflows MCP server ready (executors: zcode,grok,claude,codex${GROK_HOSTED ? "; default=zcode" : ""})
+  `[odw] open-dynamic-workflows MCP server ready (executors: zcode,grok,claude,codex${DEFAULT_EXECUTOR ? `; default=${DEFAULT_EXECUTOR}` : ""})
 `
 );

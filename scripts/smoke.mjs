@@ -86,6 +86,29 @@ console.log(JSON.stringify({
 `,
 );
 chmodSync(fakeZcode, 0o755);
+const fakeClaude = resolve(fakeBin, "claude");
+writeFileSync(
+  fakeClaude,
+  `#!/usr/bin/env node
+process.stdin.resume();
+process.stdin.on("end", () => {
+  console.log(JSON.stringify({
+    type: "assistant",
+    message: { content: [{ type: "text", text: "ODW_FAKE_CLAUDE_OK" }] },
+  }));
+  console.log(JSON.stringify({
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    result: "ODW_FAKE_CLAUDE_OK",
+    session_id: "fake-claude-session",
+    usage: { input_tokens: 1, output_tokens: 1 },
+    total_cost_usd: 0,
+  }));
+});
+`,
+);
+chmodSync(fakeClaude, 0o755);
 writeFileSync(
   fakeCodex,
   `#!/usr/bin/env node
@@ -135,6 +158,7 @@ expect("Codex MCP command is plugin-relative", () => {
   assert.deepEqual(server.args, ["./dist/mcp/server.js"]);
   assert.equal(server.cwd, ".");
   assert.equal(server.env.ODW_REQUIRE_CWD, "1");
+  assert.equal(server.env.ODW_HOST, "codex");
   assert.equal(server.tool_timeout_sec, 28800);
 });
 expect("Codex marketplace exposes this repository as the plugin", () => {
@@ -200,6 +224,7 @@ expect("Grok MCP launch uses GROK_PLUGIN_ROOT and a long tool timeout", () => {
 expect("root ZCode MCP launch still uses ZCODE_PLUGIN_ROOT", () => {
   const server = rootMcp.mcpServers["open-dynamic-workflows"];
   assert.ok(server.args.some((a) => String(a).includes("${ZCODE_PLUGIN_ROOT}")));
+  assert.equal(server.env.ODW_HOST, "zcode");
 });
 expect("authoring skill and /workflows command are present", () => {
   assert.ok(existsSync(resolve(root, "skills", "open-dynamic-workflows", "SKILL.md")));
@@ -293,18 +318,18 @@ try {
     assert.equal(list.result.tools.length, 1);
     assert.equal(list.result.tools[0].name, "workflow");
   });
-  expect("workflow tool description names zcode first and still names grok/codex", () => {
+  expect("workflow tool description names host-native defaults and all executors", () => {
     const d = list.result.tools[0].description;
     assert.ok(d.includes("agent("));
     assert.ok(d.includes("executor:'grok'"));
     assert.ok(d.includes("executor:'codex'"));
     assert.ok(d.includes("executor:'zcode'"));
+    assert.ok(d.includes("executor:'claude'"));
     assert.ok(d.includes("meta"));
-    assert.match(d, /omits executor runs on zcode/);
-    const grokAt = d.indexOf("executor:'grok'");
-    const codexAt = d.indexOf("executor:'codex'");
-    const zcodeAt = d.indexOf("executor:'zcode'");
-    assert.ok(zcodeAt >= 0 && zcodeAt < grokAt && zcodeAt < codexAt);
+    assert.match(d, /grok on Grok Build/);
+    assert.match(d, /zcode on ZCode/);
+    assert.match(d, /codex on Codex/);
+    assert.match(d, /claude on Claude Code/);
   });
 
   console.log("\n[smoke] tools/call workflow (trivial script returning a value)…");
@@ -382,7 +407,7 @@ try {
     assert.equal(parsed.failedAgents, 0);
   });
 
-  console.log("\n[smoke] Codex host still requires an explicit executor");
+  console.log("\n[smoke] Codex host omitted-executor uses codex");
   framedWrite(proc, {
     jsonrpc: "2.0",
     id: 14,
@@ -393,15 +418,16 @@ try {
       arguments: {
         cwd: workflowCwd,
         script:
-          "export const meta = { name: 'need-exec', description: 'omit executor' }\n" +
-          "return await agent('no executor on Codex host')\n",
+          "export const meta = { name: 'codex-default', description: 'omit executor' }\n" +
+          "return await agent('Reply with OK only.', { label: 'default-codex' })\n",
       },
     },
   });
   const missingExec = await waitForMessage((m) => m.id === 14, 30000);
-  expect("Codex host omitted-executor still fails", () => {
-    assert.equal(missingExec.result.isError, true);
-    assert.match(missingExec.result.content[0].text, /executor/i);
+  expect("Codex host omitted-executor uses codex", () => {
+    const parsed = JSON.parse(missingExec.result.content[0].text);
+    assert.equal(missingExec.result.isError, false);
+    assert.equal(parsed.value, "ODW_FAKE_CODEX_OK");
   });
 
   console.log("\n[smoke] tools/call workflow (missing script + scriptPath → isError)");
@@ -626,15 +652,15 @@ try {
       arguments: {
         script:
           "export const meta = { name: 'host-default', description: 'omit executor on grok host' }\n" +
-          "return await agent('Reply with OK only.', { label: 'default-zcode' })\n",
+          "return await agent('Reply with OK only.', { label: 'default-grok' })\n",
       },
     },
   });
   const grokDefault = await grokHostWait((m) => m.id === 21, 30000);
-  expect("Grok host omitted-executor uses zcode", () => {
+  expect("Grok host omitted-executor uses grok", () => {
     const parsed = JSON.parse(grokDefault.result.content[0].text);
     assert.equal(grokDefault.result.isError, false);
-    assert.equal(parsed.value, "ODW_FAKE_ZCODE_OK");
+    assert.equal(parsed.value, "ODW_FAKE_GROK_OK");
     assert.equal(parsed.agentCount, 1);
   });
   expect("Grok omit-cwd writes .odw into the session project, not the plugin root", () => {
@@ -655,6 +681,92 @@ try {
 } finally {
   grokHost.kill();
 }
+
+async function assertHostDefault(label, extraEnv, expectedText) {
+  console.log(`\n[smoke] ${label} host omitted-executor…`);
+  const project = mkdtempSync(resolve(tmpdir(), `odw-${label}-project-`));
+  const env = {
+    ...process.env,
+    PATH: `${fakeBin}${delimiter}${process.env.PATH ?? ""}`,
+  };
+  delete env.ODW_REQUIRE_CWD;
+  delete env.GROK_WORKSPACE_ROOT;
+  delete env.ZCODE_PROJECT_DIR;
+  delete env.CLAUDE_PROJECT_DIR;
+  delete env.ZCODE_BIN;
+  delete env.GROK_BIN;
+  delete env.GROK_PLUGIN_ROOT;
+  delete env.CLAUDE_PLUGIN_ROOT;
+  delete env.ZCODE_PLUGIN_ROOT;
+  delete env.ODW_HOST;
+  Object.assign(env, extraEnv);
+  const child = spawn(process.execPath, [serverPath], {
+    cwd: project,
+    env,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let buf = Buffer.alloc(0);
+  const err = [];
+  child.stdout.on("data", (c) => (buf = Buffer.concat([buf, c])));
+  child.stderr.on("data", (c) => err.push(c.toString()));
+  const write = (obj) => {
+    const body = JSON.stringify(obj);
+    child.stdin.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
+  };
+  const wait = (predicate, timeoutMs = 15000) =>
+    new Promise((resolveWait, rejectWait) => {
+      const t = setTimeout(() => rejectWait(new Error(`timeout ${label}`)), timeoutMs);
+      const check = () => {
+        const { messages, rest } = readFramed(buf);
+        const hit = messages.find(predicate);
+        if (hit) {
+          clearTimeout(t);
+          child.stdout.off("data", check);
+          buf = rest;
+          resolveWait(hit);
+        }
+      };
+      child.stdout.on("data", check);
+      check();
+    });
+  try {
+    write({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: label, version: "0" } },
+    });
+    await wait((m) => m.id === 1);
+    write({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: {
+        name: "workflow",
+        arguments: {
+          script:
+            `export const meta = { name: '${label}-default', description: 'omit executor' }\n` +
+            "return await agent('Reply with OK only.')\n",
+        },
+      },
+    });
+    const call = await wait((m) => m.id === 2, 30000);
+    expect(`${label} host omitted-executor uses ${label}`, () => {
+      const parsed = JSON.parse(call.result.content[0].text);
+      assert.equal(call.result.isError, false);
+      assert.equal(parsed.value, expectedText);
+    });
+  } catch (e) {
+    failed++;
+    console.error(`[smoke] ${label}-host fatal: ${e.message}`);
+    console.error(err.join(""));
+  } finally {
+    child.kill();
+  }
+}
+
+await assertHostDefault("zcode", { ODW_HOST: "zcode", ZCODE_PLUGIN_ROOT: root }, "ODW_FAKE_ZCODE_OK");
+await assertHostDefault("claude", { ODW_HOST: "claude", CLAUDE_PLUGIN_ROOT: root }, "ODW_FAKE_CLAUDE_OK");
 
 console.log(`\n[smoke] ${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

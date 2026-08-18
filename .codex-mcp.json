@@ -6,7 +6,8 @@
       "cwd": ".",
       "tool_timeout_sec": 28800,
       "env": {
-        "ODW_REQUIRE_CWD": "1"
+        "ODW_REQUIRE_CWD": "1",
+        "ODW_HOST": "codex"
       }
     }
   }
