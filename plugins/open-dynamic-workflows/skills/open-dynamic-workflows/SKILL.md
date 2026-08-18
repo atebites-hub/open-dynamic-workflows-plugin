@@ -71,9 +71,8 @@ These are injected into the script scope:
   `schema`, `model` (override; omit to inherit), `reasoningEffort` (Codex override; a model
   override defaults to `medium`), `isolation:'worktree'` (fresh git worktree —
   EXPENSIVE, only when agents mutate files in parallel), `agentType` (named subagent preset).
-  Prefer **zcode** (zcode-cli) first. When this plugin is loaded into Grok Build, an `agent()`
-  that omits `executor` runs on zcode. On Codex or ZCode every node must still name its
-  executor (see the per-node example below).
+  When `executor` is omitted, the **host CLI** is used: grok in Grok Build, zcode in ZCode,
+  codex in Codex, claude in Claude Code. Name another worker to mix CLIs (see below).
 - **`pipeline(items, stage1, stage2, …) → Promise<any[]>`** — run each item through all
   stages independently, **NO barrier between stages** (item A can be in stage 3 while item B
   is in stage 1). Each stage callback gets `(prevResult, originalItem, index)`. A throwing
@@ -107,9 +106,8 @@ return { draft, review }
 ### 3. Rules that the runtime enforces (fail fast)
 
 - **Plain JS only**: no `import`, `require`, `fs`, or Node APIs in the script.
-- **Every `agent()` needs an `executor` unless Grok is the host**: on Grok Build the
-  default worker is `zcode` (zcode-cli). On Codex or ZCode there is no default. An unknown
-  name (one not in the host's registry) fails the run with a clear error.
+- **Omitted `executor` uses the host CLI**: grok / zcode / codex / claude depending on
+  where the plugin is loaded. An unknown name fails the run with a clear error.
 - **Determinism**: `Date.now()`, `Math.random()`, and argless `new Date()` are unavailable
   (they would break resume). Pass timestamps via `args`; vary by index instead of random.
 - **Structured output**: `opts.schema` is a JSON Schema whose **root must be `type:"object"`**
@@ -212,9 +210,9 @@ structure — the example only teaches the primitives.
 Call the installed `workflow` tool with the script inline.
 
 **Grok Build** (`grok plugin marketplace add …` / `grok plugin install open-dynamic-workflows --trust`):
-zcode (zcode-cli) is the default worker. You may omit `executor`; it defaults to zcode. Name
-`grok` / `claude` / `codex` only when you want a different CLI. `cwd` may be omitted — the MCP
-server inherits the session's project directory (do not pass the plugin install path).
+omitted `executor` runs on **grok**. Name `zcode` / `claude` / `codex` to use another CLI.
+`cwd` may be omitted — the MCP server inherits the session's project directory (do not pass
+the plugin install path).
 
 ```js
 workflow({
@@ -223,9 +221,10 @@ workflow({
 })
 ```
 
-**Codex** callers must pass the active workspace as an absolute `cwd` and must name an executor
-(`grok`, `claude`, `codex`, or `zcode`). **ZCode** callers may omit `cwd` (`ZCODE_PROJECT_DIR`)
-but must still name an executor. This plugin registers `grok`, `claude`, `codex`, and `zcode`.
+**Codex** callers must pass the active workspace as an absolute `cwd`; omitted `executor` runs
+on **codex**. **ZCode** callers may omit `cwd` (`ZCODE_PROJECT_DIR`); omitted `executor` runs
+on **zcode**. **Claude Code** omitted `executor` runs on **claude**. This plugin registers
+`grok`, `claude`, `codex`, and `zcode`.
 
 ### Standalone runtime
 

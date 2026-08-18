@@ -16,8 +16,8 @@ grok plugin marketplace add atebites-hub/open-dynamic-workflows-plugin
 grok plugin install open-dynamic-workflows --trust
 ```
 
-新开一个 Grok 会话（或在 Plugins 标签按 `r`）。zcode（zcode-cli）是默认 worker：未指名
-executor 的 `agent()` 跑在 `zcode` 上。插件是自包含的，无需在项目中检出或构建 ODW。
+新开一个 Grok 会话（或在 Plugins 标签按 `r`）。未指名 executor 的 `agent()` 跑在 `grok` 上。
+插件是自包含的，无需在项目中检出或构建 ODW。
 
 ## 安装（Codex）
 
@@ -53,8 +53,8 @@ codex plugin add open-dynamic-workflows@open-dynamic-workflows
   └─ 调用 workflow({ cwd, script })
       └─ 插件的 MCP server（dist/mcp/server.js）
           └─ ODW 运行时：runWorkflow({ executors: { zcode, grok, claude, codex } })
-              ├─ agent({executor:'zcode'})（Grok 托管时可省略）spawn `zcode --prompt …`
-              ├─ agent({executor:'grok'}) spawn `grok -p …`
+              ├─ agent({executor:'zcode'})（ZCode 托管时可省略）spawn `zcode --prompt …`
+              ├─ agent({executor:'grok'})（Grok Build 托管时可省略）spawn `grok -p …`
               ├─ agent({executor:'claude'}) spawn `claude --print …`
               ├─ agent({executor:'codex'}) spawn `codex exec --json …`
               ├─ parallel()/pipeline() 负责编排，journal 持久化结果
@@ -123,8 +123,8 @@ npm run verify   # 重新打包并运行插件冒烟检查
 
 ## 说明 / 范围（v0.2）
 
-- **ZCode、Grok、Claude 和 Codex worker。** 插件注册四个执行器。在 Grok Build 上，省略
-  `executor` 默认走 zcode（zcode-cli）。Codex 和 ZCode 仍须显式指定。未知名称会立即失败。
+- **按 host 默认 worker。** 省略 `executor` 时：Grok Build → grok，ZCode → zcode，
+  Codex → codex，Claude Code → claude。指名即可覆盖。未知名称会立即失败。
 - **同步工具。** `workflow()` 运行到完成再返回（v1）。带 task 通知的后台执行是 v2 增强。
 - **本地证据。** `.odw/` 产物包含工作流脚本、prompt 和 agent 响应；新建的 run 文件仅 owner
   可读写。请保持 `.odw/` 被 gitignore。
