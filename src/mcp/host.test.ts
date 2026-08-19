@@ -15,6 +15,7 @@ test("ODW_HOST wins over other signals", () => {
   assert.equal(defaultExecutorForHost({ ODW_HOST: "zcode" }), "zcode");
   assert.equal(defaultExecutorForHost({ ODW_HOST: "codex" }), "codex");
   assert.equal(defaultExecutorForHost({ ODW_HOST: "claude" }), "claude");
+  assert.equal(defaultExecutorForHost({ ODW_HOST: "cursor" }), "cursor");
 });
 
 test("Codex ODW_REQUIRE_CWD maps to codex before plugin-root aliases", () => {
@@ -39,6 +40,8 @@ test("plugin-root env maps to the matching CLI; Grok beats the Claude alias", ()
   );
   assert.equal(defaultExecutorForHost({ ZCODE_PLUGIN_ROOT: "/z" }), "zcode");
   assert.equal(defaultExecutorForHost({ CLAUDE_PLUGIN_ROOT: "/c" }), "claude");
+  assert.equal(defaultExecutorForHost({ CURSOR_PLUGIN_ROOT: "/cur" }), "cursor");
+  assert.equal(defaultExecutorForHost({ PLUGIN_ROOT: "/p" }), "cursor");
 });
 
 test("unknown host has no default", () => {

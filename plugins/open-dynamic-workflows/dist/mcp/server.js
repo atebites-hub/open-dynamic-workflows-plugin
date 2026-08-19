@@ -8321,8 +8321,198 @@ function makeGrokExecutor() {
 }
 var grokExecutor = (opts) => makeGrokExecutor()(opts);
 
-// open-dynamic-workflows/dist/executor/zcode/zcode-envelope.js
+// open-dynamic-workflows/dist/executor/cursor/cursor.js
+import { existsSync } from "node:fs";
+import { delimiter, join as join2 } from "node:path";
+
+// open-dynamic-workflows/dist/executor/cursor/cursor-json.js
 function isObject4(v) {
+  return typeof v === "object" && v !== null;
+}
+function applySchema2(outcome, schema) {
+  if (!schema || outcome.isError)
+    return outcome;
+  const candidate = extractJsonObject(outcome.text) ?? outcome.text;
+  try {
+    outcome.structuredOutput = JSON.parse(candidate);
+  } catch {
+    outcome.isError = true;
+    outcome.resultSubtype = "error_during_execution";
+  }
+  return outcome;
+}
+function parseCursorJsonLine(line) {
+  const trimmed = line.trim();
+  if (trimmed.length === 0)
+    return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+}
+function fromResult(ev, opts) {
+  const isError = ev["is_error"] === true || ev["subtype"] === "error" || opts?.exitCode !== void 0 && opts.exitCode !== null && opts.exitCode !== 0;
+  const text = typeof ev["result"] === "string" ? ev["result"] : "";
+  const sessionId = typeof ev["session_id"] === "string" ? ev["session_id"] : typeof ev["sessionId"] === "string" ? ev["sessionId"] : null;
+  return applySchema2({
+    text,
+    sessionId,
+    costUsd: 0,
+    resultSubtype: isError ? "error_during_execution" : "success",
+    isError,
+    usage: { inputTokens: 0, outputTokens: 0 }
+  }, opts?.schema);
+}
+function reduceCursorJson(events, opts) {
+  let last;
+  for (const ev of events) {
+    if (isObject4(ev) && ev["type"] === "result")
+      last = ev;
+  }
+  if (last === void 0) {
+    return {
+      text: "",
+      sessionId: null,
+      costUsd: 0,
+      resultSubtype: "error_during_execution",
+      isError: true,
+      usage: { inputTokens: 0, outputTokens: 0 }
+    };
+  }
+  return fromResult(last, opts);
+}
+function reduceCursorStreamJson(events, opts) {
+  let sessionId = null;
+  let lastResult;
+  for (const ev of events) {
+    if (!isObject4(ev))
+      continue;
+    if (typeof ev["session_id"] === "string")
+      sessionId = ev["session_id"];
+    if (ev["type"] === "result")
+      lastResult = ev;
+  }
+  if (lastResult !== void 0) {
+    const outcome = fromResult(lastResult, opts);
+    if (outcome.sessionId === null)
+      outcome.sessionId = sessionId;
+    return outcome;
+  }
+  return {
+    text: "",
+    sessionId,
+    costUsd: 0,
+    resultSubtype: "error_during_execution",
+    isError: true,
+    usage: { inputTokens: 0, outputTokens: 0 }
+  };
+}
+function reduceCursorEvents(events, opts) {
+  for (const ev of events) {
+    if (isObject4(ev) && ev["type"] === "system") {
+      return reduceCursorStreamJson(events, opts);
+    }
+    if (isObject4(ev) && ev["type"] === "assistant") {
+      return reduceCursorStreamJson(events, opts);
+    }
+  }
+  return reduceCursorJson(events, opts);
+}
+
+// open-dynamic-workflows/dist/executor/cursor/cursor.js
+var CHILD_UNSET2 = [
+  "CURSOR_PLUGIN_ROOT",
+  "PLUGIN_ROOT",
+  "GROK_PLUGIN_ROOT",
+  "CLAUDE_PLUGIN_ROOT",
+  "ZCODE_PLUGIN_ROOT"
+];
+function whichOnPath(name) {
+  const path4 = process.env.PATH ?? "";
+  for (const dir of path4.split(delimiter)) {
+    if (!dir)
+      continue;
+    const candidate = join2(dir, name);
+    if (existsSync(candidate))
+      return candidate;
+  }
+  return void 0;
+}
+function resolveCursorBin() {
+  const override = process.env.CURSOR_BIN?.trim();
+  if (override)
+    return override;
+  return whichOnPath("cursor-agent") ?? whichOnPath("agent") ?? "cursor-agent";
+}
+function composePrompt(opts) {
+  const parts = [];
+  if (opts.appendSystemPrompt && opts.appendSystemPrompt.trim().length > 0) {
+    parts.push(`[system instructions: ${opts.appendSystemPrompt.trim()}]`);
+  }
+  if (opts.schema !== void 0) {
+    parts.push(`Respond with ONLY valid JSON (no prose, no code fences) matching this JSON Schema:
+${compactSchemaToJson(opts.schema)}`);
+  }
+  parts.push(opts.prompt);
+  return parts.join("\n\n");
+}
+function buildCursorArgs(opts) {
+  const args = [
+    "-p",
+    "--output-format",
+    opts.schema !== void 0 ? "json" : "stream-json",
+    "--force",
+    "--workspace",
+    opts.cwd
+  ];
+  if (opts.model)
+    args.push("--model", opts.model);
+  if (opts.resumeSessionId)
+    args.push("--resume", opts.resumeSessionId);
+  args.push(composePrompt(opts));
+  return args;
+}
+function reduceCursor(events, ctx) {
+  const outcome = reduceCursorEvents(events, {
+    schema: ctx.opts.schema !== void 0,
+    exitCode: ctx.exitCode
+  });
+  const core = {
+    text: outcome.text,
+    sessionId: outcome.sessionId,
+    costUsd: outcome.costUsd,
+    resultSubtype: outcome.resultSubtype,
+    isError: outcome.isError,
+    usage: {
+      inputTokens: outcome.usage.inputTokens,
+      outputTokens: outcome.usage.outputTokens
+    }
+  };
+  if (outcome.structuredOutput !== void 0) {
+    core.structuredOutput = outcome.structuredOutput;
+  }
+  if (core.isError && ctx.stderr.trim().length > 0 && core.text.length === 0) {
+    core.text = ctx.stderr.trim();
+  }
+  return core;
+}
+function makeCursorExecutor() {
+  return makeSubprocessExecutor({
+    command: resolveCursorBin(),
+    prepare: async (opts) => ({
+      args: buildCursorArgs(opts),
+      env: { ODW_CURSOR_LEAF: "1" },
+      unsetEnv: CHILD_UNSET2
+    }),
+    parseLine: parseCursorJsonLine,
+    reduce: (events, ctx) => reduceCursor(events, ctx)
+  });
+}
+var cursorExecutor = (opts) => makeCursorExecutor()(opts);
+
+// open-dynamic-workflows/dist/executor/zcode/zcode-envelope.js
+function isObject5(v) {
   return typeof v === "object" && v !== null;
 }
 function toFiniteNumber4(v) {
@@ -8334,7 +8524,7 @@ function parseZcodeEnvelopeLine(line) {
     return null;
   try {
     const parsed = JSON.parse(trimmed);
-    if (isObject4(parsed) && parsed["type"] === "zcode_result") {
+    if (isObject5(parsed) && parsed["type"] === "zcode_result") {
       return parsed;
     }
     return null;
@@ -8345,7 +8535,7 @@ function parseZcodeEnvelopeLine(line) {
 function reduceZcodeEnvelope(events, opts) {
   let envelope;
   for (const ev of events) {
-    if (isObject4(ev) && ev["type"] === "zcode_result") {
+    if (isObject5(ev) && ev["type"] === "zcode_result") {
       envelope = ev;
     }
   }
@@ -8387,7 +8577,7 @@ function reduceZcodeEnvelope(events, opts) {
 
 // open-dynamic-workflows/dist/executor/zcode/zcode.js
 var ZCODE_BIN = process.env.ZCODE_BIN?.trim() || "zcode";
-function composePrompt(opts) {
+function composePrompt2(opts) {
   const parts = [];
   if (opts.appendSystemPrompt && opts.appendSystemPrompt.trim().length > 0) {
     parts.push(`[system instructions: ${opts.appendSystemPrompt.trim()}]`);
@@ -8402,7 +8592,7 @@ ${compactSchemaToJson(opts.schema)}`);
 function buildZcodeArgs(opts) {
   const args = [
     "--prompt",
-    composePrompt(opts),
+    composePrompt2(opts),
     "--mode",
     "yolo"
   ];
@@ -8458,12 +8648,13 @@ import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/mcp/host.ts
-var NAMED_HOSTS = /* @__PURE__ */ new Set(["grok", "zcode", "codex", "claude"]);
+var NAMED_HOSTS = /* @__PURE__ */ new Set(["cursor", "grok", "zcode", "codex", "claude"]);
 function defaultExecutorForHost(env = process.env) {
   const named = env.ODW_HOST?.trim();
   if (named && NAMED_HOSTS.has(named)) return named;
   if (env.ODW_REQUIRE_CWD === "1") return "codex";
   if (env.GROK_PLUGIN_ROOT?.trim()) return "grok";
+  if (env.CURSOR_PLUGIN_ROOT?.trim() || env.PLUGIN_ROOT?.trim()) return "cursor";
   if (env.ZCODE_PLUGIN_ROOT?.trim()) return "zcode";
   if (env.CLAUDE_PLUGIN_ROOT?.trim()) return "claude";
   return void 0;
@@ -8475,6 +8666,7 @@ var SERVER_INFO = {
   version: "0.2.0"
 };
 var EXECUTORS = {
+  cursor: cursorExecutor,
   zcode: zcodeExecutor,
   grok: grokExecutor,
   claude: claudeExecutor,
@@ -8482,11 +8674,11 @@ var EXECUTORS = {
 };
 var SANDBOX_META_KEY = "codex/sandbox-state-meta";
 var DEFAULT_EXECUTOR = defaultExecutorForHost();
-var NESTED_GROK_LEAF = process.env.ODW_GROK_LEAF === "1";
+var NESTED_LEAF = process.env.ODW_GROK_LEAF === "1" || process.env.ODW_CURSOR_LEAF === "1";
 var WORKFLOW_TOOL = {
   name: "workflow",
   description: [
-    "Execute a dynamic workflow script that orchestrates Grok, Claude, Codex, or ZCode subagents deterministically.",
+    "Execute a dynamic workflow script that orchestrates Cursor, Grok, Claude, Codex, or ZCode subagents deterministically.",
     "A dynamic workflow is plain JavaScript (NOT TypeScript) that orchestrates subagents at scale:",
     "the model writes the script, this tool runs it.",
     "",
@@ -8501,10 +8693,10 @@ var WORKFLOW_TOOL = {
     "  variables, spreads, or interpolation).",
     "- These globals are injected into scope: agent(prompt, {executor, ...}), parallel(thunks),",
     "  pipeline(items, ...stages), phase(title), log(message), args, workflow(ref, args?).",
-    "- Named workers: {executor:'zcode'}, {executor:'grok'}, {executor:'claude'}, {executor:'codex'}.",
-    "  When executor is omitted, the host CLI is used: grok on Grok Build, zcode on ZCode,",
-    "  codex on Codex, claude on Claude Code. Name another worker to override. An unknown",
-    "  name fails the run.",
+    "- Named workers: {executor:'cursor'}, {executor:'zcode'}, {executor:'grok'}, {executor:'claude'}, {executor:'codex'}.",
+    "  When executor is omitted, the host CLI is used: cursor on Cursor, grok on Grok Build,",
+    "  zcode on ZCode, codex on Codex, claude on Claude Code. Name another worker to override.",
+    "  An unknown name fails the run.",
     "- Codex model overrides default reasoningEffort to 'medium'; set reasoningEffort explicitly",
     "  only when the selected model supports the requested value.",
     "- agent(prompt, {schema}) returns a validated object (schema root must be type:'object').",
@@ -8557,7 +8749,7 @@ var WORKFLOW_TOOL = {
     }
   }
 };
-var TOOLS = NESTED_GROK_LEAF ? [] : [WORKFLOW_TOOL];
+var TOOLS = NESTED_LEAF ? [] : [WORKFLOW_TOOL];
 var activeCalls = /* @__PURE__ */ new Map();
 var responseFraming = "content-length";
 function writeMessage(message) {
@@ -8591,12 +8783,12 @@ async function runWorkflowTool(args, signal, sandboxCwd) {
       isError: true
     };
   }
-  if (NESTED_GROK_LEAF) {
+  if (NESTED_LEAF) {
     return {
       content: [
         {
           type: "text",
-          text: "Nested grok leaves cannot start another workflow (ODW_GROK_LEAF=1)."
+          text: "Nested grok/cursor leaves cannot start another workflow."
         }
       ],
       isError: true
@@ -8822,6 +9014,6 @@ process.stdin.on("end", () => {
   if (buffer.length) handleRaw(buffer.toString("utf8"));
 });
 process.stderr.write(
-  `[odw] open-dynamic-workflows MCP server ready (executors: zcode,grok,claude,codex${DEFAULT_EXECUTOR ? `; default=${DEFAULT_EXECUTOR}` : ""})
+  `[odw] open-dynamic-workflows MCP server ready (executors: cursor,zcode,grok,claude,codex${DEFAULT_EXECUTOR ? `; default=${DEFAULT_EXECUTOR}` : ""})
 `
 );
