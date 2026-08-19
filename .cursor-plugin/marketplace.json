@@ -1,0 +1,23 @@
+{
+  "name": "open-dynamic-workflows",
+  "owner": {
+    "name": "Open Dynamic Workflows"
+  },
+  "metadata": {
+    "description": "Dynamic workflow orchestration for Cursor — fan a deterministic script out across cursor, grok, zcode, claude, and codex subagents."
+  },
+  "plugins": [
+    {
+      "name": "open-dynamic-workflows",
+      "source": "plugins/open-dynamic-workflows",
+      "description": "Dynamic workflow orchestration — workflow MCP tool, authoring skill, and /workflows command. Host-native default is cursor.",
+      "keywords": [
+        "workflow",
+        "orchestration",
+        "subagent",
+        "fan-out",
+        "cursor"
+      ]
+    }
+  ]
+}

@@ -66,13 +66,13 @@ These are injected into the script scope:
   matching object and `agent()` resolves to the **validated object**. Returns `null` if the
   agent is skipped/aborted (filter with `.filter(Boolean)`). `opts`: `executor` (**required** —
   picks which agent CLI runs this node, by name, from the registry the host provides, e.g.
-  `'zcode'`, `'grok'`, `'claude'`, or `'codex'`; an unknown name fails the run), `label` (short display label),
+  `'cursor'`, `'zcode'`, `'grok'`, `'claude'`, or `'codex'`; an unknown name fails the run), `label` (short display label),
   `phase` (assign to a progress group — **use this inside parallel/pipeline stages**),
   `schema`, `model` (override; omit to inherit), `reasoningEffort` (Codex override; a model
   override defaults to `medium`), `isolation:'worktree'` (fresh git worktree —
   EXPENSIVE, only when agents mutate files in parallel), `agentType` (named subagent preset).
-  When `executor` is omitted, the **host CLI** is used: grok in Grok Build, zcode in ZCode,
-  codex in Codex, claude in Claude Code. Name another worker to mix CLIs (see below).
+  When `executor` is omitted, the **host CLI** is used: cursor in Cursor, grok in Grok Build,
+  zcode in ZCode, codex in Codex, claude in Claude Code. Name another worker to mix CLIs.
 - **`pipeline(items, stage1, stage2, …) → Promise<any[]>`** — run each item through all
   stages independently, **NO barrier between stages** (item A can be in stage 3 while item B
   is in stage 1). Each stage callback gets `(prevResult, originalItem, index)`. A throwing
@@ -106,8 +106,8 @@ return { draft, review }
 ### 3. Rules that the runtime enforces (fail fast)
 
 - **Plain JS only**: no `import`, `require`, `fs`, or Node APIs in the script.
-- **Omitted `executor` uses the host CLI**: grok / zcode / codex / claude depending on
-  where the plugin is loaded. An unknown name fails the run with a clear error.
+- **Omitted `executor` uses the host CLI**: cursor / grok / zcode / codex / claude
+  depending on where the plugin is loaded. An unknown name fails the run with a clear error.
 - **Determinism**: `Date.now()`, `Math.random()`, and argless `new Date()` are unavailable
   (they would break resume). Pass timestamps via `args`; vary by index instead of random.
 - **Structured output**: `opts.schema` is a JSON Schema whose **root must be `type:"object"`**
@@ -205,9 +205,13 @@ structure — the example only teaches the primitives.
 
 ## How to RUN a workflow
 
-### Grok Build, Codex, or ZCode plugin
+### Cursor, Grok Build, Codex, or ZCode plugin
 
 Call the installed `workflow` tool with the script inline.
+
+**Cursor** (`cursor-agent plugin marketplace add <this-repo>` then install from Customize /
+`~/.cursor/plugins/local`): omitted `executor` runs on **cursor**. Name `grok` / `zcode` /
+`claude` / `codex` to use another CLI.
 
 **Grok Build** (`grok plugin marketplace add …` / `grok plugin install open-dynamic-workflows --trust`):
 omitted `executor` runs on **grok**. Name `zcode` / `claude` / `codex` to use another CLI.
@@ -224,7 +228,7 @@ workflow({
 **Codex** callers must pass the active workspace as an absolute `cwd`; omitted `executor` runs
 on **codex**. **ZCode** callers may omit `cwd` (`ZCODE_PROJECT_DIR`); omitted `executor` runs
 on **zcode**. **Claude Code** omitted `executor` runs on **claude**. This plugin registers
-`grok`, `claude`, `codex`, and `zcode`.
+`cursor`, `grok`, `claude`, `codex`, and `zcode`.
 
 ### Standalone runtime
 

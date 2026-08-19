@@ -1,9 +1,18 @@
-# open-dynamic-workflows（Grok Build + Codex + ZCode 插件）
+# open-dynamic-workflows（Cursor + Grok Build + Codex + ZCode 插件）
 
 [English](./README.md)
 
-面向 **Grok Build、Codex 和 ZCode** 的动态工作流编排——通过原生 `workflow` 工具和编写 skill，
+面向 **Cursor、Grok Build、Codex 和 ZCode** 的动态工作流编排——通过原生 `workflow` 工具和编写 skill，
 把一段确定性 JavaScript 脚本扇出成大量 CLI 子 agent。
+
+## 安装（Cursor）
+
+```bash
+cursor-agent plugin marketplace add atebites-hub/open-dynamic-workflows-plugin
+```
+
+然后在 Cursor **Customize** 里安装 **open-dynamic-workflows**（或拷到 `~/.cursor/plugins/local`）。
+未指名 `executor` 时跑在 `cursor` 上。
 
 一段动态工作流就是**编排大量子 agent 的纯 JS 脚本**。模型为任务编写脚本；插件内置的
 运行时执行它，把每个 `agent()` 调用扇出成一个真实的 `grok`、`claude`、`codex` 或 `zcode`
@@ -123,7 +132,7 @@ npm run verify   # 重新打包并运行插件冒烟检查
 
 ## 说明 / 范围（v0.2）
 
-- **按 host 默认 worker。** 省略 `executor` 时：Grok Build → grok，ZCode → zcode，
+- **按 host 默认 worker。** 省略 `executor` 时：Cursor → cursor，Grok Build → grok，ZCode → zcode，
   Codex → codex，Claude Code → claude。指名即可覆盖。未知名称会立即失败。
 - **同步工具。** `workflow()` 运行到完成再返回（v1）。带 task 通知的后台执行是 v2 增强。
 - **本地证据。** `.odw/` 产物包含工作流脚本、prompt 和 agent 响应；新建的 run 文件仅 owner

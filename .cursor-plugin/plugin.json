@@ -1,0 +1,18 @@
+{
+  "name": "open-dynamic-workflows",
+  "version": "0.2.0",
+  "description": "Dynamic workflow orchestration for Cursor — fan a deterministic script out across cursor, grok, zcode, claude, and codex subagents.",
+  "author": {
+    "name": "Open Dynamic Workflows"
+  },
+  "homepage": "https://github.com/atebites-hub/open-dynamic-workflows-plugin",
+  "repository": "https://github.com/atebites-hub/open-dynamic-workflows-plugin",
+  "license": "MIT",
+  "keywords": [
+    "workflow",
+    "orchestration",
+    "subagent",
+    "cursor"
+  ],
+  "mcpServers": "./mcp.json"
+}

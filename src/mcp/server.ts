@@ -24,6 +24,7 @@
 import {
   claudeExecutor,
   codexExecutor,
+  cursorExecutor,
   grokExecutor,
   runWorkflow,
   zcodeExecutor,
@@ -40,6 +41,7 @@ const SERVER_INFO = {
 };
 
 const EXECUTORS = {
+  cursor: cursorExecutor,
   zcode: zcodeExecutor,
   grok: grokExecutor,
   claude: claudeExecutor,
@@ -47,7 +49,7 @@ const EXECUTORS = {
 };
 const SANDBOX_META_KEY = "codex/sandbox-state-meta";
 const DEFAULT_EXECUTOR = defaultExecutorForHost();
-const NESTED_GROK_LEAF = process.env.ODW_GROK_LEAF === "1";
+const NESTED_LEAF = process.env.ODW_GROK_LEAF === "1" || process.env.ODW_CURSOR_LEAF === "1";
 
 // The tool's `description` IS the authoring contract — the model reads it to learn how
 // to write a workflow script. Keep it aligned with skills/open-dynamic-workflows/SKILL.md.
@@ -56,7 +58,7 @@ const NESTED_GROK_LEAF = process.env.ODW_GROK_LEAF === "1";
 const WORKFLOW_TOOL = {
   name: "workflow",
   description: [
-    "Execute a dynamic workflow script that orchestrates Grok, Claude, Codex, or ZCode subagents deterministically.",
+    "Execute a dynamic workflow script that orchestrates Cursor, Grok, Claude, Codex, or ZCode subagents deterministically.",
     "A dynamic workflow is plain JavaScript (NOT TypeScript) that orchestrates subagents at scale:",
     "the model writes the script, this tool runs it.",
     "",
@@ -71,10 +73,10 @@ const WORKFLOW_TOOL = {
     "  variables, spreads, or interpolation).",
     "- These globals are injected into scope: agent(prompt, {executor, ...}), parallel(thunks),",
     "  pipeline(items, ...stages), phase(title), log(message), args, workflow(ref, args?).",
-    "- Named workers: {executor:'zcode'}, {executor:'grok'}, {executor:'claude'}, {executor:'codex'}.",
-    "  When executor is omitted, the host CLI is used: grok on Grok Build, zcode on ZCode,",
-    "  codex on Codex, claude on Claude Code. Name another worker to override. An unknown",
-    "  name fails the run.",
+    "- Named workers: {executor:'cursor'}, {executor:'zcode'}, {executor:'grok'}, {executor:'claude'}, {executor:'codex'}.",
+    "  When executor is omitted, the host CLI is used: cursor on Cursor, grok on Grok Build,",
+    "  zcode on ZCode, codex on Codex, claude on Claude Code. Name another worker to override.",
+    "  An unknown name fails the run.",
     "- Codex model overrides default reasoningEffort to 'medium'; set reasoningEffort explicitly",
     "  only when the selected model supports the requested value.",
     "- agent(prompt, {schema}) returns a validated object (schema root must be type:'object').",
@@ -132,7 +134,7 @@ const WORKFLOW_TOOL = {
   },
 };
 
-const TOOLS = NESTED_GROK_LEAF ? [] : [WORKFLOW_TOOL];
+const TOOLS = NESTED_LEAF ? [] : [WORKFLOW_TOOL];
 const activeCalls = new Map<number | string, AbortController>();
 let responseFraming: "content-length" | "line" = "content-length";
 
@@ -195,12 +197,12 @@ async function runWorkflowTool(
     };
   }
 
-  if (NESTED_GROK_LEAF) {
+  if (NESTED_LEAF) {
     return {
       content: [
         {
           type: "text",
-          text: "Nested grok leaves cannot start another workflow (ODW_GROK_LEAF=1).",
+          text: "Nested grok/cursor leaves cannot start another workflow.",
         },
       ],
       isError: true,
@@ -496,5 +498,5 @@ process.stdin.on("end", () => {
 });
 
 process.stderr.write(
-  `[odw] open-dynamic-workflows MCP server ready (executors: zcode,grok,claude,codex${DEFAULT_EXECUTOR ? `; default=${DEFAULT_EXECUTOR}` : ""})\n`,
+  `[odw] open-dynamic-workflows MCP server ready (executors: cursor,zcode,grok,claude,codex${DEFAULT_EXECUTOR ? `; default=${DEFAULT_EXECUTOR}` : ""})\n`,
 );

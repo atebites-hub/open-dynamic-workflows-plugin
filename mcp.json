@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "open-dynamic-workflows": {
+      "command": "node",
+      "args": ["${PLUGIN_ROOT}/dist/mcp/server.js"],
+      "env": {
+        "ODW_HOST": "cursor"
+      }
+    }
+  }
+}

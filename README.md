@@ -1,14 +1,25 @@
-# open-dynamic-workflows (Grok Build + Codex + ZCode plugin)
+# open-dynamic-workflows (Cursor + Grok Build + Codex + ZCode plugin)
 
 [中文文档](./README_CN.md)
 
-Dynamic workflow orchestration for **Grok Build, Codex, and ZCode** — fan a deterministic
+Dynamic workflow orchestration for **Cursor, Grok Build, Codex, and ZCode** — fan a deterministic
 JavaScript script out across many CLI subagents through a native `workflow` tool and authoring skill.
 
 A dynamic workflow is a **plain-JS script that orchestrates subagents at scale**. The model
 writes the script for the task; the plugin's bundled runtime executes it, fanning each
-`agent()` call out to a real `grok`, `claude`, `codex`, or `zcode` subprocess. The control flow
-(loops, branching, fan-out) lives in deterministic JS — the LLM work happens only at the leaves.
+`agent()` call out to a real `cursor-agent`, `grok`, `claude`, `codex`, or `zcode` subprocess.
+
+## Install (Cursor)
+
+```bash
+cursor-agent plugin marketplace add atebites-hub/open-dynamic-workflows-plugin
+```
+
+Then install **open-dynamic-workflows** from Cursor **Customize** (or copy the plugin package
+into `~/.cursor/plugins/local`). The CLI can add a marketplace; install is via Customize /
+local plugins — there is no separate non-interactive `plugin install` on older CLIs.
+
+Omitted `executor` runs on `cursor` (`cursor-agent` / `CURSOR_BIN`).
 
 ## Install (Grok Build)
 
@@ -54,7 +65,8 @@ After install, a session gets:
 model writes a JS workflow script
   └─ calls workflow({ cwd, script })
       └─ plugin's MCP server (dist/mcp/server.js)
-          └─ ODW runtime: runWorkflow({ executors: { zcode, grok, claude, codex } })
+          └─ ODW runtime: runWorkflow({ executors: { cursor, zcode, grok, claude, codex } })
+              ├─ agent({executor:'cursor'}) (or omitted on Cursor) spawns `cursor-agent -p …`
               ├─ agent({executor:'zcode'}) (or omitted on ZCode) spawns `zcode --prompt …`
               ├─ agent({executor:'grok'}) (or omitted on Grok Build) spawns `grok -p …`
               ├─ agent({executor:'claude'}) spawns `claude --print …`
@@ -92,9 +104,12 @@ the pipeline-vs-parallel decision, adversarial-verify / judge-panel / loop-until
 
 ## Repository layout
 
-This repo is the Grok, Codex, and ZCode marketplace and the plugin.
+This repo is the Cursor, Grok, Codex, and ZCode marketplace and the plugin.
 
 ```
+├── .cursor-plugin/marketplace.json # Cursor marketplace catalog
+├── .cursor-plugin/plugin.json      # Cursor plugin manifest
+├── mcp.json                        # Cursor MCP launch (${PLUGIN_ROOT})
 ├── .grok-plugin/marketplace.json   # Grok marketplace catalog
 ├── .grok-plugin/plugin.json        # Grok plugin manifest (repo-as-plugin / grok plugin install .)
 ├── .grok-plugin/mcp.json           # Grok MCP launch (GROK_PLUGIN_ROOT, 8h tool timeout)
@@ -133,8 +148,8 @@ users.
 
 ## Notes / scope (v0.2)
 
-- **Host-native default worker.** Omitted `executor` uses grok on Grok Build, zcode on ZCode,
-  codex on Codex, claude on Claude Code. Name another worker to override. Unknown names fail fast.
+- **Host-native default worker.** Omitted `executor` uses cursor on Cursor, grok on Grok Build,
+  zcode on ZCode, codex on Codex, claude on Claude Code. Name another worker to override.
 - **Synchronous tool.** `workflow()` runs to completion and returns (v1). Background execution
   with task notifications is a v2 enhancement.
 - **Local evidence.** `.odw/` artifacts contain workflow scripts, prompts, and agent responses;

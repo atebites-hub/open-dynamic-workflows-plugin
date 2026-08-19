@@ -109,6 +109,31 @@ process.stdin.on("end", () => {
 `,
 );
 chmodSync(fakeClaude, 0o755);
+const fakeCursor = resolve(fakeBin, "cursor-agent");
+writeFileSync(
+  fakeCursor,
+  `#!/usr/bin/env node
+const args = process.argv.slice(2);
+let format = "text";
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === "--output-format") format = args[i + 1] || format;
+}
+const payload = {
+  type: "result",
+  subtype: "success",
+  is_error: false,
+  result: "ODW_FAKE_CURSOR_OK",
+  session_id: "fake-cursor-session",
+};
+if (format === "json") {
+  console.log(JSON.stringify(payload));
+} else {
+  console.log(JSON.stringify({ type: "system", subtype: "init", session_id: "fake-cursor-session" }));
+  console.log(JSON.stringify(payload));
+}
+`,
+);
+chmodSync(fakeCursor, 0o755);
 writeFileSync(
   fakeCodex,
   `#!/usr/bin/env node
@@ -231,6 +256,39 @@ expect("authoring skill and /workflows command are present", () => {
   assert.ok(existsSync(resolve(root, "commands", "workflows.md")));
 });
 
+const cursorMarketplace = JSON.parse(
+  readFileSync(resolve(root, ".cursor-plugin", "marketplace.json"), "utf8"),
+);
+const cursorPlugin = JSON.parse(
+  readFileSync(resolve(root, ".cursor-plugin", "plugin.json"), "utf8"),
+);
+const cursorMcp = JSON.parse(readFileSync(resolve(root, "mcp.json"), "utf8"));
+const cursorPkgMcp = JSON.parse(
+  readFileSync(resolve(root, "plugins", "open-dynamic-workflows", "mcp.json"), "utf8"),
+);
+
+expect("Cursor marketplace names this plugin with a local source", () => {
+  const plugin = cursorMarketplace.plugins[0];
+  assert.equal(plugin.name, "open-dynamic-workflows");
+  assert.equal(plugin.source, "plugins/open-dynamic-workflows");
+  assert.notEqual(plugin.source, "./");
+});
+expect("Cursor plugin manifest points at Cursor MCP config", () => {
+  assert.equal(cursorPlugin.name, "open-dynamic-workflows");
+  assert.equal(cursorPlugin.mcpServers, "./mcp.json");
+});
+expect("Cursor MCP launch uses PLUGIN_ROOT not ZCode-only substitution", () => {
+  for (const cfg of [cursorMcp.mcpServers["open-dynamic-workflows"], cursorPkgMcp.mcpServers["open-dynamic-workflows"]]) {
+    assert.equal(cfg.command, "node");
+    assert.ok(cfg.args.some((a) => String(a).includes("${PLUGIN_ROOT}")));
+    assert.ok(!JSON.stringify(cfg).includes("${ZCODE_PLUGIN_ROOT}"));
+    assert.ok(!JSON.stringify(cfg).includes("${GROK_PLUGIN_ROOT}"));
+    assert.ok(!Object.hasOwn(cfg, "cwd"), "do not pin cwd to plugin root");
+    assert.equal(cfg.env.ODW_HOST, "cursor");
+  }
+  assert.ok(existsSync(resolve(root, "plugins", "open-dynamic-workflows", ".cursor-plugin", "plugin.json")));
+});
+
 // Send one JSON-RPC line per request, collect the framed responses. The server speaks
 // Content-Length framing, but for a smoke test we read its stdout as a stream of framed
 // messages and decode them.
@@ -321,11 +379,13 @@ try {
   expect("workflow tool description names host-native defaults and all executors", () => {
     const d = list.result.tools[0].description;
     assert.ok(d.includes("agent("));
+    assert.ok(d.includes("executor:'cursor'"));
     assert.ok(d.includes("executor:'grok'"));
     assert.ok(d.includes("executor:'codex'"));
     assert.ok(d.includes("executor:'zcode'"));
     assert.ok(d.includes("executor:'claude'"));
     assert.ok(d.includes("meta"));
+    assert.match(d, /cursor on Cursor/);
     assert.match(d, /grok on Grok Build/);
     assert.match(d, /zcode on ZCode/);
     assert.match(d, /codex on Codex/);
@@ -380,6 +440,30 @@ try {
     assert.equal(parsed.value, "ODW_FAKE_CODEX_OK");
     assert.equal(parsed.agentCount, 1);
     assert.equal(parsed.failedAgents, 0);
+  });
+
+  console.log("\n[smoke] tools/call workflow (Cursor leaf through bundled executor)…");
+  framedWrite(proc, {
+    jsonrpc: "2.0",
+    id: 15,
+    method: "tools/call",
+    params: {
+      name: "workflow",
+      _meta: sandboxMeta,
+      arguments: {
+        cwd: workflowCwd,
+        script:
+          "export const meta = { name: 'cursor-leaf', description: 'one fake Cursor leaf' }\n" +
+          "return await agent('Reply with OK only.', { executor: 'cursor', label: 'cursor' })\n",
+      },
+    },
+  });
+  const cursorCall = await waitForMessage((m) => m.id === 15, 30000);
+  expect("Cursor leaf executes through the bundled registry", () => {
+    const parsed = JSON.parse(cursorCall.result.content[0].text);
+    assert.equal(cursorCall.result.isError, false);
+    assert.equal(parsed.value, "ODW_FAKE_CURSOR_OK");
+    assert.equal(parsed.agentCount, 1);
   });
 
   console.log("\n[smoke] tools/call workflow (Grok leaf through bundled executor)…");
@@ -695,6 +779,9 @@ async function assertHostDefault(label, extraEnv, expectedText) {
   delete env.CLAUDE_PROJECT_DIR;
   delete env.ZCODE_BIN;
   delete env.GROK_BIN;
+  delete env.CURSOR_BIN;
+  delete env.CURSOR_PLUGIN_ROOT;
+  delete env.PLUGIN_ROOT;
   delete env.GROK_PLUGIN_ROOT;
   delete env.CLAUDE_PLUGIN_ROOT;
   delete env.ZCODE_PLUGIN_ROOT;
@@ -765,6 +852,7 @@ async function assertHostDefault(label, extraEnv, expectedText) {
   }
 }
 
+await assertHostDefault("cursor", { ODW_HOST: "cursor", CURSOR_PLUGIN_ROOT: root }, "ODW_FAKE_CURSOR_OK");
 await assertHostDefault("zcode", { ODW_HOST: "zcode", ZCODE_PLUGIN_ROOT: root }, "ODW_FAKE_ZCODE_OK");
 await assertHostDefault("claude", { ODW_HOST: "claude", CLAUDE_PLUGIN_ROOT: root }, "ODW_FAKE_CLAUDE_OK");
 
