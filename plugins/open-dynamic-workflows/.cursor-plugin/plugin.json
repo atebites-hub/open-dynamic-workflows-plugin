@@ -1,6 +1,6 @@
 {
   "name": "open-dynamic-workflows",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Dynamic workflow orchestration for Cursor — fan a deterministic script out across cursor, grok, zcode, claude, and codex subagents.",
   "author": {
     "name": "Open Dynamic Workflows"

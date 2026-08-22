@@ -13,7 +13,7 @@ Inspect the workflow runs in this project. Each workflow keeps its runs under `.
    - a `run_end` event with `"ok": true` → completed successfully
    - a `run_end` event with `"ok": false` → completed with failures
    - no `run_end` event → interrupted/aborted (resumable)
-3. Present a compact summary to the user: workflow name, runId (short), status, agent count, tokens, duration. Answer in the user's language.
+3. Present a compact summary to the user: workflow name, runId (short), status, agent count, tokens, duration. Answer in the user's language. If the MCP result includes `routingPolicy` and `routingPolicyFingerprint`, show those exact fields as correlation evidence; do not infer that the host CLI accepted the requested model or effort. The authoritative runtime tuple is in the per-agent trace.
 4. If the user asks to **resume** a run, they can re-run it with the run's `resumeFromRunId` by invoking the `workflow` tool with `{ cwd: "<absolute project path>", scriptPath: ".odw/<name>/script.js", resumeFromRunId: "<runId>" }`. Completed agents replay from the journal with zero token spend.
 
 ## Notes
@@ -23,3 +23,7 @@ Inspect the workflow runs in this project. Each workflow keeps its runs under `.
 - If there are no `.odw/` workflows in this project, say so and suggest the `$open-dynamic-workflows` skill to author one.
 
 Optional arguments: $ARGUMENTS
+
+Policy runs are immutable and cannot be resumed from a journal. A caller that needs an exact
+route must pass `{ executor, model, reasoningEffort }` in `routingPolicy`; omitted node route
+fields inherit it and conflicts fail before launch.

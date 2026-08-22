@@ -1,6 +1,6 @@
 {
   "name": "open-dynamic-workflows",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Run deterministic JavaScript workflows across Codex or ZCode subagents.",
   "author": {
     "name": "Open Dynamic Workflows",

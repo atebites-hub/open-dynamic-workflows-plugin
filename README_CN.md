@@ -1,8 +1,8 @@
-# open-dynamic-workflows（Cursor + Grok Build + Codex + ZCode 插件）
+# open-dynamic-workflows（Cursor + Grok Build + Claude Code + Codex + ZCode 插件）
 
 [English](./README.md)
 
-面向 **Cursor、Grok Build、Codex 和 ZCode** 的动态工作流编排——通过原生 `workflow` 工具和编写 skill，
+面向 **Cursor、Grok Build、Claude Code、Codex 和 ZCode** 的动态工作流编排——通过原生 `workflow` 工具和编写 skill，
 把一段确定性 JavaScript 脚本扇出成大量 CLI 子 agent。
 
 ## 安装（Cursor）
@@ -47,6 +47,11 @@ codex plugin add open-dynamic-workflows@open-dynamic-workflows
 
 然后重启 ZCode（或新开一个会话）。就这些——无需构建步骤，无需 `node_modules`。插件交付
 了一个自包含的 `dist/mcp/server.js`。
+
+## 安装（Claude Code）
+
+将本仓库作为 Claude Code 插件安装（或校验仓库中的 `.claude-plugin/plugin.json` 镜像），然后启用
+`open-dynamic-workflows` MCP server。省略 `executor` 时使用 `claude`，省略 `cwd` 时继承 Claude 项目目录。
 
 安装后，一个会话会获得：
 - 一个 **`workflow` 工具**——模型编写脚本并调用 `workflow({ cwd, script })`；它运行到
@@ -130,7 +135,28 @@ npm run verify   # 重新打包并运行插件冒烟检查
 构建（`scripts/build.mjs`）用 esbuild 把 ODW 及其唯一依赖（`ajv`）内联进单个 ESM 文件，
 与 android-emulator 插件的模式一致。交付给用户的产物不含 `node_modules`。
 
-## 说明 / 范围（v0.2）
+## 受治理的路由（v0.3）
+
+需要一次运行固定使用同一路由时，传入不可变 policy：
+
+```js
+workflow({
+  cwd: "/项目的绝对路径",
+  routingPolicy: { executor: "codex", model: "gpt-5.4", reasoningEffort: "high" },
+  script,
+})
+```
+
+policy 由 ODW core 在创建 journal 或启动子进程前验证。省略的节点路由继承 policy；显式的
+executor、model 或 reasoning effort 不一致会在启动前失败。嵌套工作流继承同一 policy。policy
+运行不能与 `resumeFromRunId` 或缓存重放组合。MCP 结果只公开允许的 policy 三元组及其 SHA-256
+`routingPolicyFingerprint`；这只是关联证据，不证明 host CLI 真正接受了 model。host 提供时，
+请在 run trace 中查看权威的 executor/model/effort 和 runtime ID。
+
+不传 policy 时，现有 host 默认保持不变：从启动环境选择 Cursor、Grok、Claude、Codex 或 ZCode。
+显式 executor 仍可覆盖 host 默认。
+
+## 说明 / 范围（v0.3）
 
 - **按 host 默认 worker。** 省略 `executor` 时：Cursor → cursor，Grok Build → grok，ZCode → zcode，
   Codex → codex，Claude Code → claude。指名即可覆盖。未知名称会立即失败。

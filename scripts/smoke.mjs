@@ -12,8 +12,16 @@
 // 在 `node scripts/build.mjs`（或 `npm run setup`）之后运行。
 
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { delimiter, resolve } from "node:path";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { delimiter, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 
@@ -32,6 +40,7 @@ const scratch = mkdtempSync(resolve(tmpdir(), "odw-smoke-"));
 const workflowCwd = mkdtempSync(resolve(tmpdir(), "odw-workflow-"));
 const fakeBin = mkdtempSync(resolve(tmpdir(), "odw-bin-"));
 const fakeCodex = resolve(fakeBin, "codex");
+const fakeLaunchLog = resolve(scratch, "fake-launch.log");
 const fakeGrok = resolve(fakeBin, "grok");
 const fakeZcode = resolve(fakeBin, "zcode");
 const sandboxMeta = {
@@ -137,6 +146,8 @@ chmodSync(fakeCursor, 0o755);
 writeFileSync(
   fakeCodex,
   `#!/usr/bin/env node
+const fs = require("node:fs");
+if (process.env.ODW_FAKE_LAUNCH_LOG) fs.appendFileSync(process.env.ODW_FAKE_LAUNCH_LOG, "codex\\n");
 let prompt = ""
 process.stdin.on("data", chunk => { prompt += chunk })
 process.stdin.resume()
@@ -164,6 +175,29 @@ function expect(name, fn) {
   }
 }
 
+function assertGeneratedTreeEqual(source, target, relative = "") {
+  const sourcePath = resolve(source, relative);
+  const targetPath = resolve(target, relative);
+  assert.equal(existsSync(sourcePath), true, `missing generated source ${relative}`);
+  assert.equal(existsSync(targetPath), true, `missing generated copy ${relative}`);
+  if (statSync(sourcePath).isDirectory()) {
+    assert.deepEqual(
+      readdirSync(sourcePath).sort(),
+      readdirSync(targetPath).sort(),
+      `generated tree entries differ at ${relative}`,
+    );
+    for (const entry of readdirSync(sourcePath)) {
+      assertGeneratedTreeEqual(source, target, join(relative, entry));
+    }
+    return;
+  }
+  assert.deepEqual(
+    readFileSync(sourcePath),
+    readFileSync(targetPath),
+    `generated copy differs at ${relative}`,
+  );
+}
+
 const codexManifest = JSON.parse(
   readFileSync(resolve(root, ".codex-plugin", "plugin.json"), "utf8"),
 );
@@ -176,6 +210,25 @@ expect("Codex manifest registers the skill and MCP server", () => {
   assert.equal(codexManifest.name, "open-dynamic-workflows");
   assert.equal(codexManifest.skills, "./skills/");
   assert.equal(codexManifest.mcpServers, "./.codex-mcp.json");
+});
+expect("all host manifests and marketplace entries use release 0.3.0", () => {
+  for (const relative of [
+    ".codex-plugin/plugin.json",
+    ".cursor-plugin/plugin.json",
+    ".claude-plugin/plugin.json",
+    ".grok-plugin/plugin.json",
+    ".zcode-plugin/plugin.json",
+  ]) {
+    assert.equal(JSON.parse(readFileSync(resolve(root, relative), "utf8")).version, "0.3.0", relative);
+  }
+  for (const relative of [
+    "marketplace.json",
+    ".agents/plugins/marketplace.json",
+    ".cursor-plugin/marketplace.json",
+    ".grok-plugin/marketplace.json",
+  ]) {
+    assert.equal(JSON.parse(readFileSync(resolve(root, relative), "utf8")).plugins[0].version, "0.3.0", relative);
+  }
 });
 expect("Codex MCP command is plugin-relative", () => {
   const server = codexMcp.mcpServers["open-dynamic-workflows"];
@@ -202,6 +255,9 @@ const grokMcp = JSON.parse(
   readFileSync(resolve(root, ".grok-plugin", "mcp.json"), "utf8"),
 );
 const rootMcp = JSON.parse(readFileSync(resolve(root, ".mcp.json"), "utf8"));
+const claudePlugin = JSON.parse(
+  readFileSync(resolve(root, ".claude-plugin", "plugin.json"), "utf8"),
+);
 
 expect("Grok marketplace names this plugin with a local source", () => {
   const plugin = grokMarketplace.plugins[0];
@@ -251,9 +307,29 @@ expect("root ZCode MCP launch still uses ZCODE_PLUGIN_ROOT", () => {
   assert.ok(server.args.some((a) => String(a).includes("${ZCODE_PLUGIN_ROOT}")));
   assert.equal(server.env.ODW_HOST, "zcode");
 });
+expect("Claude manifest carries its inline host-native MCP server", () => {
+  const server = claudePlugin.mcpServers["open-dynamic-workflows"];
+  assert.equal(server.command, "node");
+  assert.deepEqual(server.args, ["${CLAUDE_PLUGIN_ROOT}/dist/mcp/server.js"]);
+  assert.equal(server.env.ODW_HOST, "claude");
+});
 expect("authoring skill and /workflows command are present", () => {
   assert.ok(existsSync(resolve(root, "skills", "open-dynamic-workflows", "SKILL.md")));
   assert.ok(existsSync(resolve(root, "commands", "workflows.md")));
+});
+expect("nested marketplace package has no generated-copy drift", () => {
+  const pkg = resolve(root, "plugins", "open-dynamic-workflows");
+  for (const relative of [
+    "dist",
+    "skills",
+    "commands",
+    "mcp.json",
+    ".cursor-plugin/plugin.json",
+    ".grok-plugin/plugin.json",
+    ".grok-plugin/mcp.json",
+  ]) {
+    assertGeneratedTreeEqual(root, pkg, relative);
+  }
 });
 
 const cursorMarketplace = JSON.parse(
@@ -326,6 +402,7 @@ const proc = spawn(process.execPath, [serverPath], {
     ODW_REQUIRE_CWD: "1",
     PATH: `${fakeBin}${delimiter}${process.env.PATH ?? ""}`,
     ZCODE_PROJECT_DIR: scratch,
+    ODW_FAKE_LAUNCH_LOG: fakeLaunchLog,
   },
   stdio: ["pipe", "pipe", "pipe"],
 });
@@ -391,6 +468,18 @@ try {
     assert.match(d, /codex on Codex/);
     assert.match(d, /claude on Claude Code/);
   });
+  expect("workflow tool advertises the exact immutable routingPolicy schema", () => {
+    assert.deepEqual(list.result.tools[0].inputSchema.properties.routingPolicy, {
+      type: "object",
+      additionalProperties: false,
+      required: ["executor", "model", "reasoningEffort"],
+      properties: {
+        executor: { type: "string", minLength: 1 },
+        model: { type: "string", minLength: 1 },
+        reasoningEffort: { type: "string", minLength: 1 },
+      },
+    });
+  });
 
   console.log("\n[smoke] tools/call workflow (trivial script returning a value)…");
   framedWrite(proc, {
@@ -441,6 +530,118 @@ try {
     assert.equal(parsed.agentCount, 1);
     assert.equal(parsed.failedAgents, 0);
   });
+
+  console.log("\n[smoke] policy forwards one immutable route and returns its fingerprint");
+  framedWrite(proc, {
+    jsonrpc: "2.0",
+    id: 16,
+    method: "tools/call",
+    params: {
+      name: "workflow",
+      _meta: sandboxMeta,
+      arguments: {
+        cwd: workflowCwd,
+        routingPolicy: { executor: "codex", model: "policy-model", reasoningEffort: "high" },
+        script:
+          "export const meta = { name: 'policy-forward', description: 'two policy nodes' }\n" +
+          "return await parallel([() => agent('one'), () => agent('two')])\n",
+      },
+    },
+  });
+  const policyCall = await waitForMessage((m) => m.id === 16, 30000);
+  const policyResult = JSON.parse(policyCall.result.content[0].text);
+  expect("valid routingPolicy reaches ODW and returns allowlisted evidence", () => {
+    assert.equal(policyCall.result.isError, false);
+    assert.equal(policyResult.agentCount, 2);
+    assert.deepEqual(policyResult.routingPolicy, {
+      executor: "codex",
+      model: "policy-model",
+      reasoningEffort: "high",
+    });
+    assert.match(policyResult.routingPolicyFingerprint, /^[a-f0-9]{64}$/);
+    assert.equal(JSON.stringify(policyResult).includes("prompt"), false);
+  });
+
+  const launchBeforeConflicts = existsSync(fakeLaunchLog) ? readFileSync(fakeLaunchLog, "utf8") : "";
+  async function policyFailure(id, nodeOptions, expected) {
+    framedWrite(proc, {
+      jsonrpc: "2.0",
+      id,
+      method: "tools/call",
+      params: {
+        name: "workflow",
+        _meta: sandboxMeta,
+        arguments: {
+          cwd: workflowCwd,
+          routingPolicy: { executor: "codex", model: "policy-model", reasoningEffort: "high" },
+          script:
+            `export const meta = { name: 'policy-failure-${id}', description: 'conflict' }\n` +
+            `return await agent('conflict', ${JSON.stringify(nodeOptions)})\n`,
+        },
+      },
+    });
+    const result = await waitForMessage((m) => m.id === id, 30000);
+    expect(`policy ${expected} conflict fails before launch`, () => {
+      assert.equal(result.result.isError, true);
+      assert.match(result.result.content[0].text, new RegExp(expected));
+    });
+  }
+  await policyFailure(17, { executor: "zcode" }, "executor conflict");
+  await policyFailure(18, { model: "other-model" }, "model conflict");
+  await policyFailure(19, { reasoningEffort: "low" }, "reasoningEffort conflict");
+  expect("policy conflicts do not launch a fake process", () => {
+    const after = existsSync(fakeLaunchLog) ? readFileSync(fakeLaunchLog, "utf8") : "";
+    assert.equal(after, launchBeforeConflicts);
+  });
+
+  framedWrite(proc, {
+    jsonrpc: "2.0",
+    id: 22,
+    method: "tools/call",
+    params: {
+      name: "workflow",
+      _meta: sandboxMeta,
+      arguments: {
+        cwd: workflowCwd,
+        resumeFromRunId: "prior-run",
+        routingPolicy: { executor: "codex", model: "policy-model", reasoningEffort: "high" },
+        script: "export const meta = { name: 'policy-resume', description: 'resume conflict' }\nreturn true\n",
+      },
+    },
+  });
+  const resumePolicyCall = await waitForMessage((m) => m.id === 22, 30000);
+  expect("routingPolicy plus resume fails before launch", () => {
+    assert.equal(resumePolicyCall.result.isError, true);
+    assert.match(resumePolicyCall.result.content[0].text, /routingPolicy cannot be combined/);
+  });
+
+  const malformedPolicies = [
+    [23, "not-an-object", /routingPolicy must be an object/],
+    [24, { executor: "codex", model: "policy-model", reasoningEffort: "high", extra: true }, /unknown field/],
+    [25, { executor: "codex", model: " ", reasoningEffort: "high" }, /model/],
+    [26, { executor: "missing", model: "policy-model", reasoningEffort: "high" }, /unregistered executor/],
+  ];
+  for (const [id, routingPolicy, pattern] of malformedPolicies) {
+    framedWrite(proc, {
+      jsonrpc: "2.0",
+      id,
+      method: "tools/call",
+      params: {
+        name: "workflow",
+        _meta: sandboxMeta,
+        arguments: {
+          cwd: workflowCwd,
+          routingPolicy,
+          script: `export const meta = { name: 'policy-malformed-${id}', description: 'malformed' }\nreturn true\n`,
+        },
+      },
+    });
+    const malformed = await waitForMessage((m) => m.id === id, 30000);
+    expect(`malformed routingPolicy ${id} is rejected by ODW core`, () => {
+      assert.equal(malformed.result.isError, true);
+      assert.match(malformed.result.content[0].text, pattern);
+    });
+  }
 
   console.log("\n[smoke] tools/call workflow (Cursor leaf through bundled executor)…");
   framedWrite(proc, {

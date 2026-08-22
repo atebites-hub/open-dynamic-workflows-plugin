@@ -8,6 +8,7 @@
   "plugins": [
     {
       "name": "open-dynamic-workflows",
+      "version": "0.3.0",
       "description": "Dynamic workflow orchestration — fan a deterministic script out across grok, claude, codex, and zcode subagents. Provides a workflow MCP tool, an authoring skill, and a /workflows command.",
       "category": "developer-tools",
       "source": { "type": "local", "path": "./plugins/open-dynamic-workflows" },

@@ -18,7 +18,7 @@
 
 import { chmod, cp, mkdir, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { build } from "esbuild";
 import { execSync } from "node:child_process";
 
@@ -83,4 +83,15 @@ await rm(resolve(grokPluginDir, "commands"), { recursive: true, force: true });
 await cp(resolve(root, "dist"), resolve(grokPluginDir, "dist"), { recursive: true });
 await cp(resolve(root, "skills"), resolve(grokPluginDir, "skills"), { recursive: true });
 await cp(resolve(root, "commands"), resolve(grokPluginDir, "commands"), { recursive: true });
+for (const relative of [
+  "mcp.json",
+  ".cursor-plugin/plugin.json",
+  ".grok-plugin/plugin.json",
+  ".grok-plugin/mcp.json",
+]) {
+  const source = resolve(root, relative);
+  const target = resolve(grokPluginDir, relative);
+  await mkdir(dirname(target), { recursive: true });
+  await cp(source, target);
+}
 console.log(`[build] grok plugin package → ${grokPluginDir}`);

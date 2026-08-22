@@ -5,7 +5,7 @@
     "en": "Dynamic workflow orchestration for Codex and ZCode — fan a deterministic script out across many subagents. Provides a `workflow` tool, an authoring skill, and a `/workflows` command.",
     "zh-CN": "面向 Codex 和 ZCode 的动态工作流编排——把一段确定性脚本扇出成大量子 agent。提供 `workflow` 工具、编写 skill 和 `/workflows` 命令。"
   },
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": {
     "name": "Open Dynamic Workflows",
     "url": "https://github.com/atebites-hub/open-dynamic-workflows-plugin"

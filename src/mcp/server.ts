@@ -29,7 +29,7 @@ import {
   runWorkflow,
   zcodeExecutor,
 } from "../../open-dynamic-workflows/dist/index.js";
-import type { WorkflowResult } from "../../open-dynamic-workflows/dist/index.js";
+import type { RoutingPolicy, WorkflowResult } from "../../open-dynamic-workflows/dist/index.js";
 import { realpath } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,7 +37,7 @@ import { defaultExecutorForHost } from "./host.js";
 
 const SERVER_INFO = {
   name: "open-dynamic-workflows",
-  version: "0.2.0",
+  version: "0.3.0",
 };
 
 const EXECUTORS = {
@@ -79,6 +79,10 @@ const WORKFLOW_TOOL = {
     "  An unknown name fails the run.",
     "- Codex model overrides default reasoningEffort to 'medium'; set reasoningEffort explicitly",
     "  only when the selected model supports the requested value.",
+    "- routingPolicy is an immutable exact {executor, model, reasoningEffort} route for the run.",
+    "  Omitted node route fields inherit it; conflicts fail before launch and nested workflows inherit it.",
+    "  Policy runs cannot resume/use cache. Its SHA-256 fingerprint is correlation evidence only and still",
+    "  requires authoritative host runtime attestation.",
     "- agent(prompt, {schema}) returns a validated object (schema root must be type:'object').",
     "- pipeline() has NO barrier between stages (default for multi-stage); parallel() IS a barrier.",
     "- Determinism: Date.now/Math.random/argless new Date() throw (resume safety). Pass timestamps",
@@ -130,6 +134,16 @@ const WORKFLOW_TOOL = {
         description:
           "Re-run a previous run by id. Completed agent() calls replay from the journal with zero token spend.",
       },
+      routingPolicy: {
+        type: "object",
+        additionalProperties: false,
+        required: ["executor", "model", "reasoningEffort"],
+        properties: {
+          executor: { type: "string", minLength: 1 },
+          model: { type: "string", minLength: 1 },
+          reasoningEffort: { type: "string", minLength: 1 },
+        },
+      },
     },
   },
 };
@@ -179,11 +193,19 @@ async function runWorkflowTool(
     scriptPath?: unknown;
     args?: unknown;
     resumeFromRunId?: unknown;
+    routingPolicy?: unknown;
   },
   signal?: AbortSignal,
   sandboxCwd?: unknown,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError: boolean }> {
-  const { cwd: requestedCwd, script, scriptPath, args: workflowArgs, resumeFromRunId } = args;
+  const {
+    cwd: requestedCwd,
+    script,
+    scriptPath,
+    args: workflowArgs,
+    resumeFromRunId,
+    routingPolicy,
+  } = args;
 
   if (!script && !scriptPath) {
     return {
@@ -284,6 +306,7 @@ async function runWorkflowTool(
       ...(scriptPath !== undefined ? { scriptPath } : {}),
       ...(workflowArgs !== undefined ? { args: workflowArgs } : {}),
       ...(resumeFromRunId !== undefined ? { resumeFromRunId } : {}),
+      ...(routingPolicy !== undefined ? { routingPolicy: routingPolicy as RoutingPolicy } : {}),
       cwd,
       executors: EXECUTORS,
       ...(DEFAULT_EXECUTOR !== undefined ? { defaultExecutor: DEFAULT_EXECUTOR } : {}),
@@ -318,6 +341,10 @@ async function runWorkflowTool(
     durationMs: result.durationMs,
     ...(result.failedAgents > 0
       ? { hint: `${result.failedAgents} agent(s) failed. Resume with resumeFromRunId: "${result.runId}".` }
+      : {}),
+    ...(result.routingPolicy !== undefined ? { routingPolicy: result.routingPolicy } : {}),
+    ...(result.routingPolicyFingerprint !== undefined
+      ? { routingPolicyFingerprint: result.routingPolicyFingerprint }
       : {}),
   };
 
