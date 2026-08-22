@@ -21,7 +21,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { delimiter, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 
@@ -187,7 +187,7 @@ function assertGeneratedTreeEqual(source, target, relative = "") {
       `generated tree entries differ at ${relative}`,
     );
     for (const entry of readdirSync(sourcePath)) {
-      assertGeneratedTreeEqual(source, target, resolve(relative, entry));
+      assertGeneratedTreeEqual(source, target, join(relative, entry));
     }
     return;
   }
