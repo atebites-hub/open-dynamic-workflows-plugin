@@ -38,4 +38,4 @@ jobs:
           npm run verify
           npm --prefix open-dynamic-workflows run typecheck
           npm --prefix open-dynamic-workflows run smoke
-          git diff --exit-code -- dist/mcp/server.js
+          git diff --exit-code -- dist/mcp/server.js plugins/open-dynamic-workflows

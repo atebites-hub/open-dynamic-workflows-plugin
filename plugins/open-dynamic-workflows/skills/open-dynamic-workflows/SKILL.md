@@ -205,7 +205,7 @@ structure — the example only teaches the primitives.
 
 ## How to RUN a workflow
 
-### Cursor, Grok Build, Codex, or ZCode plugin
+### Cursor, Grok Build, Claude Code, Codex, or ZCode plugin
 
 Call the installed `workflow` tool with the script inline.
 
@@ -229,6 +229,26 @@ workflow({
 on **codex**. **ZCode** callers may omit `cwd` (`ZCODE_PROJECT_DIR`); omitted `executor` runs
 on **zcode**. **Claude Code** omitted `executor` runs on **claude**. This plugin registers
 `cursor`, `grok`, `claude`, `codex`, and `zcode`.
+
+### Immutable routing policy
+
+For a governed run, pass exactly one raw `routingPolicy` object to `workflow`:
+
+```js
+workflow({
+  cwd: '/absolute/project/path',
+  routingPolicy: { executor: 'codex', model: 'gpt-5.4', reasoningEffort: 'high' },
+  script,
+})
+```
+
+ODW core validates the exact three fields before creating the journal or launching a CLI. A node
+may omit route fields and inherit the policy; any explicit executor/model/reasoning-effort
+conflict fails before launch. Nested workflows inherit the same policy and fingerprint. Do not
+combine a policy with `resumeFromRunId` or cache replay. The MCP response exposes only the
+allowlisted `routingPolicy` and SHA-256 `routingPolicyFingerprint`; inspect the run trace for
+host-authoritative model, effort, executor, and runtime ID. The fingerprint is correlation
+evidence, not a claim that a host accepted the requested route.
 
 ### Standalone runtime
 

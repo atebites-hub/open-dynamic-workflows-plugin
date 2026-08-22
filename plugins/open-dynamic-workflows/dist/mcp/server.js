@@ -6852,8 +6852,56 @@ function buildGlobals(hooks) {
 import { execFileSync } from "node:child_process";
 import path2 from "node:path";
 
+// open-dynamic-workflows/dist/runtime/routing.js
+import { createHash } from "node:crypto";
+var FIELDS = ["executor", "model", "reasoningEffort"];
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function normalizeRoutingPolicy(policy, executors) {
+  if (!isRecord(policy))
+    throw new Error("routingPolicy must be an object");
+  for (const key of Object.keys(policy)) {
+    if (!FIELDS.includes(key))
+      throw new Error(`routingPolicy unknown field "${key}"`);
+  }
+  const values = {};
+  for (const field of FIELDS) {
+    const value = policy[field];
+    if (typeof value !== "string" || value.trim().length === 0) {
+      throw new Error(`routingPolicy ${field} must be a non-empty string`);
+    }
+    values[field] = value.trim();
+  }
+  if (executors[values.executor] === void 0) {
+    throw new Error(`routingPolicy references unregistered executor "${values.executor}"`);
+  }
+  return Object.freeze({
+    executor: values.executor,
+    model: values.model,
+    reasoningEffort: values.reasoningEffort
+  });
+}
+function fingerprintRoutingPolicy(policy) {
+  return createHash("sha256").update(JSON.stringify({
+    executor: policy.executor,
+    model: policy.model,
+    reasoningEffort: policy.reasoningEffort
+  })).digest("hex");
+}
+function resolveAgentRoute(policy, options) {
+  if (!policy)
+    return options;
+  for (const field of FIELDS) {
+    if (options[field] !== void 0 && options[field] !== policy[field]) {
+      throw new Error(`routing policy ${field} conflict: requested "${options[field]}" but policy requires "${policy[field]}"`);
+    }
+  }
+  return policy;
+}
+
 // open-dynamic-workflows/dist/journal/journal.js
-import { createHash, randomBytes } from "node:crypto";
+import { createHash as createHash2, randomBytes } from "node:crypto";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 function stableStringify(value) {
@@ -6869,7 +6917,7 @@ function stableStringify(value) {
   return `{${parts.join(",")}}`;
 }
 function keyFor(prompt, opts) {
-  return createHash("sha256").update(prompt).update(stableStringify(opts)).digest("hex");
+  return createHash2("sha256").update(prompt).update(stableStringify(opts)).digest("hex");
 }
 function makeRunId() {
   const millis36 = Date.now().toString(36);
@@ -7127,7 +7175,12 @@ function cleanupWorktree(repoCwd, wtDir) {
 function createHooks(ctx, deps) {
   const agent = async (prompt, opts) => {
     const o = { ...opts ?? {} };
-    if (!o.executor && ctx.defaultExecutor) {
+    Object.assign(o, resolveAgentRoute(ctx.routingPolicy, {
+      ...o.executor !== void 0 ? { executor: o.executor } : {},
+      ...o.model !== void 0 ? { model: o.model } : {},
+      ...o.reasoningEffort !== void 0 ? { reasoningEffort: o.reasoningEffort } : {}
+    }));
+    if (!ctx.routingPolicy && !o.executor && ctx.defaultExecutor) {
       o.executor = ctx.defaultExecutor;
     }
     const key = keyFor(prompt, o);
@@ -7179,6 +7232,8 @@ function createHooks(ctx, deps) {
         tracePath: path2.join(ctx.runDir, "agents", `agent-${id}.jsonl`),
         ...resolvedModel !== void 0 ? { model: resolvedModel } : {},
         ...o.reasoningEffort !== void 0 ? { reasoningEffort: o.reasoningEffort } : {},
+        ...ctx.routingPolicyFingerprint !== void 0 ? { routingPolicyFingerprint: ctx.routingPolicyFingerprint } : {},
+        ...ctx.routingPolicy !== void 0 ? { effectiveRoute: ctx.routingPolicy } : {},
         ...o.schema !== void 0 ? { schema: o.schema } : {},
         ...appendSystemPrompt !== void 0 ? { appendSystemPrompt } : {},
         ...ctx.agentTimeoutMs !== void 0 ? { timeoutMs: ctx.agentTimeoutMs } : {}
@@ -7378,6 +7433,15 @@ async function runWorkflow(options) {
   const meta = extractMeta(source);
   const slug = workflowSlug(options.name ?? meta.name);
   const baseDir = options.runDir ?? path3.join(cwd, ".odw", slug, "runs");
+  const executors = options.executors;
+  if (!executors || Object.keys(executors).length === 0) {
+    throw new Error("runWorkflow requires a non-empty 'executors' map");
+  }
+  if (options.routingPolicy !== void 0 && options.resumeFromRunId !== void 0) {
+    throw new Error("routingPolicy cannot be combined with resumeFromRunId");
+  }
+  const routingPolicy = options.routingPolicy !== void 0 ? normalizeRoutingPolicy(options.routingPolicy, executors) : void 0;
+  const routingPolicyFingerprint = routingPolicy ? fingerprintRoutingPolicy(routingPolicy) : void 0;
   const journal = await openJournal({
     baseDir,
     ...options.resumeFromRunId !== void 0 ? { resumeFromRunId: options.resumeFromRunId } : {}
@@ -7407,10 +7471,6 @@ async function runWorkflow(options) {
     journal.appendEvent(e);
     options.onEvent?.(e);
   };
-  const executors = options.executors;
-  if (!executors || Object.keys(executors).length === 0) {
-    throw new Error("runWorkflow requires a non-empty 'executors' map");
-  }
   const runInternal = async (src, scriptArgs, depth) => {
     const ctx = {
       runId: journal.runId,
@@ -7436,7 +7496,8 @@ async function runWorkflow(options) {
       ...options.defaultExecutor !== void 0 ? { defaultExecutor: options.defaultExecutor } : {},
       ...options.agentTimeoutMs !== void 0 ? { agentTimeoutMs: options.agentTimeoutMs } : {},
       ...options.maxRetries !== void 0 ? { maxRetries: options.maxRetries } : {},
-      ...options.retryBackoffMs !== void 0 ? { retryBackoffMs: options.retryBackoffMs } : {}
+      ...options.retryBackoffMs !== void 0 ? { retryBackoffMs: options.retryBackoffMs } : {},
+      ...routingPolicy !== void 0 && routingPolicyFingerprint !== void 0 ? { routingPolicy, routingPolicyFingerprint } : {}
     };
     const runNested = async (ref, a) => {
       if (depth >= 1) {
@@ -7465,7 +7526,13 @@ async function runWorkflow(options) {
     const hooks = createHooks(ctx, { semaphore: sem, runNested, args: scriptArgs });
     return await runScript(src, hooks);
   };
-  emit({ type: "run_start", runId: journal.runId, meta, ts: now() });
+  emit({
+    type: "run_start",
+    runId: journal.runId,
+    meta,
+    ts: now(),
+    ...routingPolicy !== void 0 && routingPolicyFingerprint !== void 0 ? { routingPolicy, routingPolicyFingerprint } : {}
+  });
   const startedAt = Date.now();
   let ok2 = true;
   let value;
@@ -7521,7 +7588,8 @@ async function runWorkflow(options) {
     failedAgents,
     failedWorkflows,
     durable,
-    journalErrors
+    journalErrors,
+    ...routingPolicy !== void 0 && routingPolicyFingerprint !== void 0 ? { routingPolicy, routingPolicyFingerprint } : {}
   };
 }
 
@@ -7814,7 +7882,16 @@ function makeSubprocessExecutor(spec) {
               isError: core.isError,
               resultSubtype: core.resultSubtype,
               stderr: stderrBuf,
-              events
+              events,
+              ...opts.routingPolicyFingerprint !== void 0 && opts.effectiveRoute !== void 0 ? {
+                routing: {
+                  policyFingerprint: opts.routingPolicyFingerprint,
+                  executor: opts.effectiveRoute.executor,
+                  model: opts.effectiveRoute.model,
+                  reasoningEffort: opts.effectiveRoute.reasoningEffort,
+                  runtimeId: core.sessionId ?? null
+                }
+              } : {}
             }).then(finish);
           } else {
             finish();
@@ -8513,7 +8590,10 @@ var cursorExecutor = (opts) => makeCursorExecutor()(opts);
 
 // open-dynamic-workflows/dist/executor/zcode/zcode-envelope.js
 function isObject5(v) {
-  return typeof v === "object" && v !== null;
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function isNonEmptyString(value) {
+  return typeof value === "string" && value.trim().length > 0;
 }
 function toFiniteNumber4(v) {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
@@ -8533,12 +8613,8 @@ function parseZcodeEnvelopeLine(line) {
   }
 }
 function reduceZcodeEnvelope(events, opts) {
-  let envelope;
-  for (const ev of events) {
-    if (isObject5(ev) && ev["type"] === "zcode_result") {
-      envelope = ev;
-    }
-  }
+  const envelopes = events.filter((ev) => isObject5(ev) && ev["type"] === "zcode_result");
+  const envelope = envelopes.at(-1);
   if (envelope === void 0) {
     return {
       text: "",
@@ -8549,6 +8625,38 @@ function reduceZcodeEnvelope(events, opts) {
       usage: { inputTokens: 0, outputTokens: 0 },
       telemetryAvailable: false
     };
+  }
+  const invalidAttestation = (reason) => ({
+    text: `invalid zcode runtime attestation: ${reason}`,
+    sessionId: envelope.sessionId ?? null,
+    costUsd: toFiniteNumber4(envelope.costUsd),
+    resultSubtype: "error_during_execution",
+    isError: true,
+    usage: { inputTokens: 0, outputTokens: 0 },
+    telemetryAvailable: false
+  });
+  if (opts?.effectiveRoute !== void 0) {
+    if (envelopes.length !== 1)
+      return invalidAttestation("expected exactly one result envelope");
+    const attestation = envelope.runtimeAttestation;
+    if (!isObject5(attestation))
+      return invalidAttestation("missing runtime attestation");
+    if (attestation.type !== "zcode_runtime_attestation" || attestation.schemaVersion !== 1 || attestation.executor !== "zcode" || attestation.route !== "odw" || attestation.role !== "main" || attestation.parentSessionId !== null || attestation.policySource !== null || attestation.rolePolicy !== null || attestation.rolePolicyFingerprint !== null || !isNonEmptyString(attestation.runtimeVersion)) {
+      return invalidAttestation("malformed runtime attestation");
+    }
+    if (attestation.runtimeVersion === "unknown")
+      return invalidAttestation("fallback runtime version");
+    if (!isNonEmptyString(attestation.runtimeId) || !isNonEmptyString(attestation.sessionId) || attestation.runtimeId !== attestation.sessionId || attestation.runtimeId !== envelope.sessionId) {
+      return invalidAttestation("runtime id mismatch");
+    }
+    if (opts.effectiveRoute.executor !== "zcode")
+      return invalidAttestation("executor mismatch");
+    if (attestation.model !== opts.effectiveRoute.model || attestation.reasoningEffort !== opts.effectiveRoute.reasoningEffort) {
+      return invalidAttestation("observed route mismatch");
+    }
+    if (!/^[a-f0-9]{64}$/u.test(opts.routingPolicyFingerprint ?? "")) {
+      return invalidAttestation("invalid policy fingerprint");
+    }
   }
   const isError = envelope.exitCode !== 0;
   const total = toFiniteNumber4(envelope.totalTokens);
@@ -8598,13 +8706,17 @@ function buildZcodeArgs(opts) {
   ];
   if (opts.model)
     args.push("--model", opts.model);
+  if (opts.reasoningEffort)
+    args.push("--reasoning-effort", opts.reasoningEffort);
   if (opts.resumeSessionId)
     args.push("--resume", opts.resumeSessionId);
   return args;
 }
 function reduceZcode(events, ctx) {
   const outcome = reduceZcodeEnvelope(events, {
-    schema: ctx.opts.schema !== void 0
+    schema: ctx.opts.schema !== void 0,
+    ...ctx.opts.effectiveRoute !== void 0 ? { effectiveRoute: ctx.opts.effectiveRoute } : {},
+    ...ctx.opts.routingPolicyFingerprint !== void 0 ? { routingPolicyFingerprint: ctx.opts.routingPolicyFingerprint } : {}
   });
   const core = {
     text: outcome.text,
@@ -8663,7 +8775,7 @@ function defaultExecutorForHost(env = process.env) {
 // src/mcp/server.ts
 var SERVER_INFO = {
   name: "open-dynamic-workflows",
-  version: "0.2.0"
+  version: "0.3.0"
 };
 var EXECUTORS = {
   cursor: cursorExecutor,
@@ -8699,6 +8811,10 @@ var WORKFLOW_TOOL = {
     "  An unknown name fails the run.",
     "- Codex model overrides default reasoningEffort to 'medium'; set reasoningEffort explicitly",
     "  only when the selected model supports the requested value.",
+    "- routingPolicy is an immutable exact {executor, model, reasoningEffort} route for the run.",
+    "  Omitted node route fields inherit it; conflicts fail before launch and nested workflows inherit it.",
+    "  Policy runs cannot resume/use cache. Its SHA-256 fingerprint is correlation evidence only and still",
+    "  requires authoritative host runtime attestation.",
     "- agent(prompt, {schema}) returns a validated object (schema root must be type:'object').",
     "- pipeline() has NO barrier between stages (default for multi-stage); parallel() IS a barrier.",
     "- Determinism: Date.now/Math.random/argless new Date() throw (resume safety). Pass timestamps",
@@ -8745,6 +8861,16 @@ var WORKFLOW_TOOL = {
       resumeFromRunId: {
         type: "string",
         description: "Re-run a previous run by id. Completed agent() calls replay from the journal with zero token spend."
+      },
+      routingPolicy: {
+        type: "object",
+        additionalProperties: false,
+        required: ["executor", "model", "reasoningEffort"],
+        properties: {
+          executor: { type: "string", minLength: 1 },
+          model: { type: "string", minLength: 1 },
+          reasoningEffort: { type: "string", minLength: 1 }
+        }
       }
     }
   }
@@ -8771,7 +8897,14 @@ function fail(id, code, message) {
   writeMessage({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
 }
 async function runWorkflowTool(args, signal, sandboxCwd) {
-  const { cwd: requestedCwd, script, scriptPath, args: workflowArgs, resumeFromRunId } = args;
+  const {
+    cwd: requestedCwd,
+    script,
+    scriptPath,
+    args: workflowArgs,
+    resumeFromRunId,
+    routingPolicy
+  } = args;
   if (!script && !scriptPath) {
     return {
       content: [
@@ -8850,6 +8983,7 @@ async function runWorkflowTool(args, signal, sandboxCwd) {
       ...scriptPath !== void 0 ? { scriptPath } : {},
       ...workflowArgs !== void 0 ? { args: workflowArgs } : {},
       ...resumeFromRunId !== void 0 ? { resumeFromRunId } : {},
+      ...routingPolicy !== void 0 ? { routingPolicy } : {},
       cwd,
       executors: EXECUTORS,
       ...DEFAULT_EXECUTOR !== void 0 ? { defaultExecutor: DEFAULT_EXECUTOR } : {},
@@ -8874,7 +9008,9 @@ async function runWorkflowTool(args, signal, sandboxCwd) {
     failedAgents: result.failedAgents,
     tokensSpent: result.tokensSpent,
     durationMs: result.durationMs,
-    ...result.failedAgents > 0 ? { hint: `${result.failedAgents} agent(s) failed. Resume with resumeFromRunId: "${result.runId}".` } : {}
+    ...result.failedAgents > 0 ? { hint: `${result.failedAgents} agent(s) failed. Resume with resumeFromRunId: "${result.runId}".` } : {},
+    ...result.routingPolicy !== void 0 ? { routingPolicy: result.routingPolicy } : {},
+    ...result.routingPolicyFingerprint !== void 0 ? { routingPolicyFingerprint: result.routingPolicyFingerprint } : {}
   };
   return {
     content: [{ type: "text", text: JSON.stringify(summary, null, 2) }],

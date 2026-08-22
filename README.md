@@ -1,8 +1,8 @@
-# open-dynamic-workflows (Cursor + Grok Build + Codex + ZCode plugin)
+# open-dynamic-workflows (Cursor + Grok Build + Claude Code + Codex + ZCode plugin)
 
 [中文文档](./README_CN.md)
 
-Dynamic workflow orchestration for **Cursor, Grok Build, Codex, and ZCode** — fan a deterministic
+Dynamic workflow orchestration for **Cursor, Grok Build, Claude Code, Codex, and ZCode** — fan a deterministic
 JavaScript script out across many CLI subagents through a native `workflow` tool and authoring skill.
 
 A dynamic workflow is a **plain-JS script that orchestrates subagents at scale**. The model
@@ -40,6 +40,13 @@ codex plugin add open-dynamic-workflows@open-dynamic-workflows
 
 Open a new Codex session. The plugin is self-contained; no project-local ODW checkout or build is
 needed. Codex calls must pass the active workspace as `cwd` when invoking `workflow`.
+
+## Install (Claude Code)
+
+Install the repository as a Claude Code plugin (or validate the checked-in
+`.claude-plugin/plugin.json` mirror), then enable the `open-dynamic-workflows` MCP server.
+Omitted `executor` runs on `claude`; the server uses the Claude project directory when `cwd` is
+omitted.
 
 ## Install (ZCode users)
 
@@ -119,8 +126,8 @@ This repo is the Cursor, Grok, Codex, and ZCode marketplace and the plugin.
 ├── .codex-mcp.json                 # Codex MCP launch config
 ├── marketplace.json                # ZCode marketplace manifest
 ├── .zcode-plugin/plugin.json       # ZCode plugin manifest
-├── .claude-plugin/plugin.json      # Claude Code compatibility mirror
 ├── .mcp.json                       # ZCode stdio MCP server (${ZCODE_PLUGIN_ROOT})
+├── .claude-plugin/plugin.json      # Claude Code manifest + MCP mirror
 ├── skills/open-dynamic-workflows/  # authoring skill (vendored from ODW)
 ├── commands/workflows.md           # /workflows slash command
 ├── src/mcp/server.ts               # MCP server source (the `workflow` tool)
@@ -146,7 +153,35 @@ The build (`scripts/build.mjs`) uses esbuild to inline ODW + its only dep (`ajv`
 single ESM file, matching the android-emulator plugin's pattern. No `node_modules` ship to
 users.
 
-## Notes / scope (v0.2)
+## Governed routing (v0.3)
+
+For a run that must use one exact route, pass an immutable policy:
+
+```js
+workflow({
+  cwd: "/absolute/project/path",
+  routingPolicy: {
+    executor: "codex",
+    model: "gpt-5.4",
+    reasoningEffort: "high",
+  },
+  script,
+})
+```
+
+The policy is validated by ODW core before the journal or any subprocess is opened. Every
+omitted node route inherits it; an explicit executor, model, or reasoning-effort conflict fails
+before launch. Nested workflows inherit the same policy. Policy runs cannot combine with
+`resumeFromRunId` or cache replay. The MCP result exposes only the allowlisted policy tuple and
+its SHA-256 `routingPolicyFingerprint`; this is correlation evidence, not proof that a host CLI
+accepted the requested model. Inspect the run trace for the authoritative executor/model/effort
+and runtime ID when the host provides them.
+
+Without `routingPolicy`, existing host defaults remain unchanged: omitted executor selects
+Cursor, Grok, Claude, Codex, or ZCode from the host launch environment. An explicit executor
+still overrides that host default.
+
+## Notes / scope (v0.3)
 
 - **Host-native default worker.** Omitted `executor` uses cursor on Cursor, grok on Grok Build,
   zcode on ZCode, codex on Codex, claude on Claude Code. Name another worker to override.

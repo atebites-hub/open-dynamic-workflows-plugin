@@ -9,6 +9,7 @@
   "plugins": [
     {
       "name": "open-dynamic-workflows",
+      "version": "0.3.0",
       "source": "plugins/open-dynamic-workflows",
       "description": "Dynamic workflow orchestration — workflow MCP tool, authoring skill, and /workflows command. Host-native default is cursor.",
       "keywords": [
