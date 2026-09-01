@@ -44,7 +44,7 @@ https://github.com/atebites-hub/open-dynamic-workflows-plugin
 Then in **Customize**, install:
 
 - **open-dynamic-workflows** — this repo (`plugins/open-dynamic-workflows`)
-- **ponytail** — https://github.com/DietrichGebert/ponytail
+- **ponytail** — https://github.com/atebites-hub/ponytail
 - **sol-advisor** — https://github.com/atebites-hub/sol-advisor
 
 Remote `source` values are GitHub URLs, which the [official marketplace schema](https://raw.githubusercontent.com/cursor/plugins/main/schemas/marketplace.schema.json) allows. Plugin entries only use `name`, `source`, and `description`. If Import from Repo only indexes in-repo paths, add the ponytail and sol-advisor GitHub repos as additional marketplaces — this catalog does not vendor those trees.

@@ -68,8 +68,13 @@ test("Cursor marketplace.json is a schema-valid three-plugin team catalog", () =
   }
   const byName = Object.fromEntries(marketplace.plugins.map((plugin) => [plugin.name, plugin]));
   assert.equal(byName["open-dynamic-workflows"].source, "plugins/open-dynamic-workflows");
-  assert.equal(byName.ponytail.source, "https://github.com/DietrichGebert/ponytail");
+  assert.equal(byName.ponytail.source, "https://github.com/atebites-hub/ponytail");
   assert.equal(byName["sol-advisor"].source, "https://github.com/atebites-hub/sol-advisor");
+  for (const plugin of marketplace.plugins) {
+    if (/^https?:\/\//.test(plugin.source)) {
+      assert.match(plugin.source, /^https:\/\/github\.com\/atebites-hub\//);
+    }
+  }
 });
 
 test("repo and marketplace package ship a dual-format Agent Plugin manifest", () => {

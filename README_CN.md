@@ -40,7 +40,7 @@ https://github.com/atebites-hub/open-dynamic-workflows-plugin
 然后在 **Customize** 里安装：
 
 - **open-dynamic-workflows** — 本仓库（`plugins/open-dynamic-workflows`）
-- **ponytail** — https://github.com/DietrichGebert/ponytail
+- **ponytail** — https://github.com/atebites-hub/ponytail
 - **sol-advisor** — https://github.com/atebites-hub/sol-advisor
 
 远程 `source` 使用 GitHub URL（官方 schema 允许）。插件条目只有 `name`、`source`、`description`。若 Import from Repo 只索引仓库内路径，把 ponytail 和 sol-advisor 的 GitHub 仓库再加为 marketplace——这里不内嵌它们的源码。

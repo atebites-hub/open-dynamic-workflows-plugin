@@ -363,8 +363,13 @@ expect("Cursor marketplace plugin entries match the official schema", () => {
     assert.equal(plugin.keywords, undefined);
   }
   const byName = Object.fromEntries(cursorMarketplace.plugins.map((plugin) => [plugin.name, plugin]));
-  assert.equal(byName.ponytail.source, "https://github.com/DietrichGebert/ponytail");
+  assert.equal(byName.ponytail.source, "https://github.com/atebites-hub/ponytail");
   assert.equal(byName["sol-advisor"].source, "https://github.com/atebites-hub/sol-advisor");
+  for (const plugin of cursorMarketplace.plugins) {
+    if (/^https?:\/\//.test(plugin.source)) {
+      assert.match(plugin.source, /^https:\/\/github\.com\/atebites-hub\//);
+    }
+  }
   for (const key of Object.keys(cursorMarketplace)) {
     assert.ok(["name", "owner", "metadata", "plugins"].includes(key), key);
   }

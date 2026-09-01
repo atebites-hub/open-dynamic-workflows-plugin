@@ -14,7 +14,7 @@
     },
     {
       "name": "ponytail",
-      "source": "https://github.com/DietrichGebert/ponytail",
+      "source": "https://github.com/atebites-hub/ponytail",
       "description": "Lazy senior dev mode. Forces the simplest, shortest solution that actually works: YAGNI, stdlib first, no unrequested abstractions."
     },
     {
