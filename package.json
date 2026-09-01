@@ -10,8 +10,10 @@
     "build": "node scripts/build.mjs",
     "smoke": "node scripts/smoke.mjs",
     "test:host": "node --experimental-strip-types --test src/mcp/host.test.ts",
+    "test:cursor-cli": "node --test scripts/cursor-cli.test.mjs",
+    "install:cursor-cli": "node scripts/install-cursor-cli.mjs",
     "typecheck": "tsc --noEmit",
-    "verify": "npm run build && npm run typecheck && npm run test:host && npm run smoke"
+    "verify": "npm run build && npm run typecheck && npm run test:host && npm run test:cursor-cli && npm run smoke"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

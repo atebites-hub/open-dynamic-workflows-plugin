@@ -9,17 +9,47 @@ A dynamic workflow is a **plain-JS script that orchestrates subagents at scale**
 writes the script for the task; the plugin's bundled runtime executes it, fanning each
 `agent()` call out to a real `cursor-agent`, `grok`, `claude`, `codex`, or `zcode` subprocess.
 
-## Install (Cursor)
+## Install (Cursor CLI)
+
+Cursor CLI (`agent`, from [cursor.com/install](https://cursor.com/install)) does not yet install plugins from a marketplace the way Grok/Codex do. Use the repo installer — one copy-paste, then a **new** `agent` session has the `workflow` tool and the authoring skill. Omitted `executor` is `cursor`.
 
 ```bash
-cursor-agent plugin marketplace add atebites-hub/open-dynamic-workflows-plugin
+git clone --depth 1 https://github.com/atebites-hub/open-dynamic-workflows-plugin.git
+node open-dynamic-workflows-plugin/scripts/install-cursor-cli.mjs
 ```
 
-Then install **open-dynamic-workflows** from Cursor **Customize** (or copy the plugin package
-into `~/.cursor/plugins/local`). The CLI can add a marketplace; install is via Customize /
-local plugins — there is no separate non-interactive `plugin install` on older CLIs.
+That writes an **absolute** MCP command into `~/.cursor/mcp.json` (CLI user/project `mcp.json` does not expand `${PLUGIN_ROOT}`), links the plugin into `~/.cursor/plugins/local/open-dynamic-workflows`, and copies the skill to `~/.cursor/skills/open-dynamic-workflows`. Then:
 
-Omitted `executor` runs on `cursor` (`cursor-agent` / `CURSOR_BIN`).
+```bash
+agent mcp enable open-dynamic-workflows
+agent mcp list
+```
+
+Headless check: `agent -p --force --trust --workspace . --output-format json --approve-mcps`. Developers iterating on a checkout can skip the home install and load the dual-format plugin (Cursor Plugin + Agent Plugin) with `agent --plugin-dir /path/to/open-dynamic-workflows-plugin`.
+
+### Cursor IDE
+
+`cursor-agent plugin marketplace add atebites-hub/open-dynamic-workflows-plugin` only registers the marketplace. Install **open-dynamic-workflows** from Customize, or copy/symlink the plugin into `~/.cursor/plugins/local`. Plugin `mcp.json` still uses `${PLUGIN_ROOT}` for that loader.
+
+Omitted `executor` runs on `cursor` (`agent` / `cursor-agent` / `CURSOR_BIN`). Nested Cursor leaves set `ODW_CURSOR_LEAF=1` and must not reload this plugin's `workflow` tool.
+
+## Cursor team marketplace
+
+This repository is the team marketplace catalog (`.cursor-plugin/marketplace.json`, name `atebites-cursor-plugins`). In **Dashboard → Plugins → Import from Repo**, import:
+
+```text
+https://github.com/atebites-hub/open-dynamic-workflows-plugin
+```
+
+Then in **Customize**, install:
+
+- **open-dynamic-workflows** — this repo (`plugins/open-dynamic-workflows`)
+- **ponytail** — https://github.com/atebites-hub/ponytail
+- **sol-advisor** — https://github.com/atebites-hub/sol-advisor
+
+Remote `source` values are GitHub URLs, which the [official marketplace schema](https://raw.githubusercontent.com/cursor/plugins/main/schemas/marketplace.schema.json) allows. Plugin entries only use `name`, `source`, and `description`. If Import from Repo only indexes in-repo paths, add the ponytail and sol-advisor GitHub repos as additional marketplaces — this catalog does not vendor those trees.
+
+CLI install for **open-dynamic-workflows** is still `node scripts/install-cursor-cli.mjs` above.
 
 ## Install (Grok Build)
 
@@ -82,8 +112,10 @@ model writes a JS workflow script
               └─ returns the script's `return` value + run metadata
 ```
 
-Each executor uses the user's installed CLI from `PATH` (`GROK_BIN` / `ZCODE_BIN` override the
-binary). Grok runs headless `grok -p` with `--output-format json` or `streaming-json`,
+Each executor uses the user's installed CLI from `PATH` (`GROK_BIN` / `ZCODE_BIN` / `CURSOR_BIN` override the
+binary). Cursor runs headless `agent`/`cursor-agent -p` with `--output-format json` or `stream-json`,
+`--force`, and `--workspace`. Nested cursor leaves do not reload this plugin's MCP (`ODW_CURSOR_LEAF=1`).
+Grok runs headless `grok -p` with `--output-format json` or `streaming-json`,
 `--always-approve`, and `--sandbox workspace` — never the broken `--tools` allowlist. Nested
 grok leaves do not reload this plugin's MCP. Codex verifies `cwd` against the active workspace
 metadata supplied by the host, then runs with JSONL output and a `workspace-write` sandbox.
@@ -114,9 +146,11 @@ the pipeline-vs-parallel decision, adversarial-verify / judge-panel / loop-until
 This repo is the Cursor, Grok, Codex, and ZCode marketplace and the plugin.
 
 ```
-├── .cursor-plugin/marketplace.json # Cursor marketplace catalog
+├── .cursor-plugin/marketplace.json # Cursor team marketplace catalog (official schema)
 ├── .cursor-plugin/plugin.json      # Cursor plugin manifest
-├── mcp.json                        # Cursor MCP launch (${PLUGIN_ROOT})
+├── plugin.json                     # Agent Plugins manifest (CLI --plugin-dir)
+├── mcp.json                        # Cursor MCP launch (${PLUGIN_ROOT}; IDE / plugin loader)
+├── scripts/install-cursor-cli.mjs  # Cursor CLI home install (absolute MCP path)
 ├── .grok-plugin/marketplace.json   # Grok marketplace catalog
 ├── .grok-plugin/plugin.json        # Grok plugin manifest (repo-as-plugin / grok plugin install .)
 ├── .grok-plugin/mcp.json           # Grok MCP launch (GROK_PLUGIN_ROOT, 8h tool timeout)
@@ -147,6 +181,7 @@ npm run setup    # init submodules + locked installs + build ODW + esbuild → d
 npm run smoke    # standalone JSON-RPC smoke test of the built server
 npm run build    # rebuild just the bundle (skips submodule init)
 npm run verify   # rebuild and run the plugin smoke checks
+node scripts/install-cursor-cli.mjs   # Cursor CLI: MCP + local plugin + skill
 ```
 
 The build (`scripts/build.mjs`) uses esbuild to inline ODW + its only dep (`ajv`) into a

@@ -5,14 +5,47 @@
 面向 **Cursor、Grok Build、Claude Code、Codex 和 ZCode** 的动态工作流编排——通过原生 `workflow` 工具和编写 skill，
 把一段确定性 JavaScript 脚本扇出成大量 CLI 子 agent。
 
-## 安装（Cursor）
+## 安装（Cursor CLI）
+
+Cursor CLI（`agent`，来自 [cursor.com/install](https://cursor.com/install)）目前还不能像 Grok/Codex 那样从 marketplace 非交互安装插件。用仓库里的安装脚本——复制一次，然后**新开** `agent` 会话即可使用 `workflow` 工具和编写 skill。未指名 `executor` 时使用 `cursor`。
 
 ```bash
-cursor-agent plugin marketplace add atebites-hub/open-dynamic-workflows-plugin
+git clone --depth 1 https://github.com/atebites-hub/open-dynamic-workflows-plugin.git
+node open-dynamic-workflows-plugin/scripts/install-cursor-cli.mjs
 ```
 
-然后在 Cursor **Customize** 里安装 **open-dynamic-workflows**（或拷到 `~/.cursor/plugins/local`）。
-未指名 `executor` 时跑在 `cursor` 上。
+脚本会把**绝对路径**的 MCP 命令写入 `~/.cursor/mcp.json`（CLI 的用户/项目 `mcp.json` 不会展开 `${PLUGIN_ROOT}`），把插件链到 `~/.cursor/plugins/local/open-dynamic-workflows`，并把 skill 拷到 `~/.cursor/skills/open-dynamic-workflows`。然后：
+
+```bash
+agent mcp enable open-dynamic-workflows
+agent mcp list
+```
+
+无界面检查：`agent -p --force --trust --workspace . --output-format json --approve-mcps`。开发时可跳过 home 安装，用双格式插件（Cursor Plugin + Agent Plugin）：`agent --plugin-dir /path/to/open-dynamic-workflows-plugin`。
+
+### Cursor IDE
+
+`cursor-agent plugin marketplace add atebites-hub/open-dynamic-workflows-plugin` 只登记 marketplace。请在 **Customize** 里安装 **open-dynamic-workflows**，或拷/链到 `~/.cursor/plugins/local`。插件 `mcp.json` 仍使用 `${PLUGIN_ROOT}`。
+
+未指名 `executor` 时跑在 `cursor` 上（`agent` / `cursor-agent` / `CURSOR_BIN`）。嵌套 Cursor 叶子会设置 `ODW_CURSOR_LEAF=1`，不得再加载本插件的 `workflow` 工具。
+
+## Cursor 团队 marketplace
+
+本仓库就是团队 marketplace 目录（`.cursor-plugin/marketplace.json`，名称 `atebites-cursor-plugins`）。在 **Dashboard → Plugins → Import from Repo** 导入：
+
+```text
+https://github.com/atebites-hub/open-dynamic-workflows-plugin
+```
+
+然后在 **Customize** 里安装：
+
+- **open-dynamic-workflows** — 本仓库（`plugins/open-dynamic-workflows`）
+- **ponytail** — https://github.com/atebites-hub/ponytail
+- **sol-advisor** — https://github.com/atebites-hub/sol-advisor
+
+远程 `source` 使用 GitHub URL（官方 schema 允许）。插件条目只有 `name`、`source`、`description`。若 Import from Repo 只索引仓库内路径，把 ponytail 和 sol-advisor 的 GitHub 仓库再加为 marketplace——这里不内嵌它们的源码。
+
+**open-dynamic-workflows** 的 CLI 安装仍是上面的 `node scripts/install-cursor-cli.mjs`。
 
 一段动态工作流就是**编排大量子 agent 的纯 JS 脚本**。模型为任务编写脚本；插件内置的
 运行时执行它，把每个 `agent()` 调用扇出成一个真实的 `grok`、`claude`、`codex` 或 `zcode`
@@ -104,6 +137,11 @@ return { results }
 `marketplace.json` 都用本地 `./` 源）。
 
 ```
+├── .cursor-plugin/marketplace.json # Cursor 团队 marketplace 目录（官方 schema）
+├── .cursor-plugin/plugin.json      # Cursor 插件清单
+├── plugin.json                     # Agent Plugins 清单（CLI --plugin-dir）
+├── mcp.json                        # Cursor MCP 启动（${PLUGIN_ROOT}）
+├── scripts/install-cursor-cli.mjs  # Cursor CLI 安装（绝对 MCP 路径）
 ├── .grok-plugin/marketplace.json   # Grok marketplace 目录
 ├── .grok-plugin/plugin.json        # Grok 插件清单
 ├── .grok-plugin/mcp.json           # Grok MCP 启动配置（GROK_PLUGIN_ROOT）
@@ -130,6 +168,7 @@ npm run setup    # 初始化 submodule + 锁定安装 + 构建 ODW + esbuild →
 npm run smoke    # 构建产物的独立 JSON-RPC 冒烟测试
 npm run build    # 只重新打包（跳过 submodule 初始化）
 npm run verify   # 重新打包并运行插件冒烟检查
+node scripts/install-cursor-cli.mjs   # Cursor CLI：MCP + 本地插件 + skill
 ```
 
 构建（`scripts/build.mjs`）用 esbuild 把 ODW 及其唯一依赖（`ajv`）内联进单个 ESM 文件，

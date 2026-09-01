@@ -85,6 +85,7 @@ await cp(resolve(root, "skills"), resolve(grokPluginDir, "skills"), { recursive:
 await cp(resolve(root, "commands"), resolve(grokPluginDir, "commands"), { recursive: true });
 for (const relative of [
   "mcp.json",
+  "plugin.json",
   ".cursor-plugin/plugin.json",
   ".grok-plugin/plugin.json",
   ".grok-plugin/mcp.json",

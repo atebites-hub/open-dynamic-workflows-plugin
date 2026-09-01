@@ -218,13 +218,13 @@ expect("all host manifests and marketplace entries use release 0.3.0", () => {
     ".claude-plugin/plugin.json",
     ".grok-plugin/plugin.json",
     ".zcode-plugin/plugin.json",
+    "plugin.json",
   ]) {
     assert.equal(JSON.parse(readFileSync(resolve(root, relative), "utf8")).version, "0.3.0", relative);
   }
   for (const relative of [
     "marketplace.json",
     ".agents/plugins/marketplace.json",
-    ".cursor-plugin/marketplace.json",
     ".grok-plugin/marketplace.json",
   ]) {
     assert.equal(JSON.parse(readFileSync(resolve(root, relative), "utf8")).plugins[0].version, "0.3.0", relative);
@@ -271,6 +271,7 @@ expect("Grok marketplace plugin package has skill, command, and MCP bundle", () 
   const pkg = resolve(root, "plugins", "open-dynamic-workflows");
   assert.ok(existsSync(resolve(pkg, ".grok-plugin", "plugin.json")));
   assert.ok(existsSync(resolve(pkg, ".grok-plugin", "mcp.json")));
+  assert.ok(existsSync(resolve(pkg, "plugin.json")));
   assert.ok(existsSync(resolve(pkg, "skills", "open-dynamic-workflows", "SKILL.md")));
   assert.ok(existsSync(resolve(pkg, "commands", "workflows.md")));
   assert.ok(existsSync(resolve(pkg, "dist", "mcp", "server.js")));
@@ -324,6 +325,7 @@ expect("nested marketplace package has no generated-copy drift", () => {
     "skills",
     "commands",
     "mcp.json",
+    "plugin.json",
     ".cursor-plugin/plugin.json",
     ".grok-plugin/plugin.json",
     ".grok-plugin/mcp.json",
@@ -344,17 +346,43 @@ const cursorPkgMcp = JSON.parse(
 );
 
 expect("Cursor marketplace names this plugin with a local source", () => {
-  const plugin = cursorMarketplace.plugins[0];
-  assert.equal(plugin.name, "open-dynamic-workflows");
-  assert.equal(plugin.source, "plugins/open-dynamic-workflows");
-  assert.notEqual(plugin.source, "./");
+  const odw = cursorMarketplace.plugins.find((plugin) => plugin.name === "open-dynamic-workflows");
+  assert.equal(odw.source, "plugins/open-dynamic-workflows");
+  assert.notEqual(odw.source, "./");
+});
+expect("Cursor marketplace plugin entries match the official schema", () => {
+  assert.equal(cursorMarketplace.name, "atebites-cursor-plugins");
+  assert.equal(cursorMarketplace.plugins.length, 3);
+  assert.deepEqual(
+    cursorMarketplace.plugins.map((plugin) => plugin.name),
+    ["open-dynamic-workflows", "ponytail", "sol-advisor"],
+  );
+  for (const plugin of cursorMarketplace.plugins) {
+    assert.deepEqual(Object.keys(plugin).sort(), ["description", "name", "source"]);
+    assert.equal(plugin.version, undefined);
+    assert.equal(plugin.keywords, undefined);
+  }
+  const byName = Object.fromEntries(cursorMarketplace.plugins.map((plugin) => [plugin.name, plugin]));
+  assert.equal(byName.ponytail.source, "https://github.com/atebites-hub/ponytail");
+  assert.equal(byName["sol-advisor"].source, "https://github.com/atebites-hub/sol-advisor");
+  for (const plugin of cursorMarketplace.plugins) {
+    if (/^https?:\/\//.test(plugin.source)) {
+      assert.match(plugin.source, /^https:\/\/github\.com\/atebites-hub\//);
+    }
+  }
+  for (const key of Object.keys(cursorMarketplace)) {
+    assert.ok(["name", "owner", "metadata", "plugins"].includes(key), key);
+  }
 });
 expect("Cursor plugin manifest points at Cursor MCP config", () => {
   assert.equal(cursorPlugin.name, "open-dynamic-workflows");
   assert.equal(cursorPlugin.mcpServers, "./mcp.json");
 });
 expect("Cursor MCP launch uses PLUGIN_ROOT not ZCode-only substitution", () => {
-  for (const cfg of [cursorMcp.mcpServers["open-dynamic-workflows"], cursorPkgMcp.mcpServers["open-dynamic-workflows"]]) {
+  for (const mcp of [cursorMcp, cursorPkgMcp]) {
+    assert.equal(mcp.$schema, "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json");
+    const cfg = mcp.mcpServers["open-dynamic-workflows"];
+    assert.equal(cfg.type, "stdio");
     assert.equal(cfg.command, "node");
     assert.ok(cfg.args.some((a) => String(a).includes("${PLUGIN_ROOT}")));
     assert.ok(!JSON.stringify(cfg).includes("${ZCODE_PLUGIN_ROOT}"));
@@ -363,6 +391,7 @@ expect("Cursor MCP launch uses PLUGIN_ROOT not ZCode-only substitution", () => {
     assert.equal(cfg.env.ODW_HOST, "cursor");
   }
   assert.ok(existsSync(resolve(root, "plugins", "open-dynamic-workflows", ".cursor-plugin", "plugin.json")));
+  assert.ok(existsSync(resolve(root, "plugin.json")));
 });
 
 // Send one JSON-RPC line per request, collect the framed responses. The server speaks

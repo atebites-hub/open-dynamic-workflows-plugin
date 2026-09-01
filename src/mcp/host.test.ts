@@ -55,6 +55,51 @@ test("unknown host has no default", () => {
   assert.equal(isGrokHost({ ZCODE_PLUGIN_ROOT: "/z" }), false);
 });
 
+test("nested cursor leaves advertise no workflow tool", async () => {
+  const root = resolve(import.meta.dirname, "../..");
+  const server = join(root, "dist", "mcp", "server.js");
+  const child = spawn(process.execPath, [server], {
+    cwd: root,
+    env: { ...process.env, ODW_HOST: "cursor", ODW_CURSOR_LEAF: "1" },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let output = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    output += chunk;
+  });
+  const request = (id: number, method: string, params?: Record<string, unknown>) =>
+    new Promise<any>((resolveRequest, reject) => {
+      const body = JSON.stringify({ jsonrpc: "2.0", id, method, ...(params ? { params } : {}) });
+      child.stdin.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
+      const deadline = setTimeout(() => reject(new Error("nested leaf MCP timed out")), 10_000);
+      const check = () => {
+        const match = /Content-Length:\s*(\d+)\r\n\r\n([\s\S]*)/i.exec(output);
+        if (!match) return;
+        const length = Number(match[1]);
+        if (Buffer.byteLength(match[2]) < length) return;
+        clearTimeout(deadline);
+        child.stdout.off("data", check);
+        const framed = match[2].slice(0, length);
+        output = match[2].slice(length);
+        resolveRequest(JSON.parse(framed));
+      };
+      child.stdout.on("data", check);
+      check();
+    });
+  try {
+    await request(1, "initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "nested-leaf", version: "0" },
+    });
+    const listed = await request(2, "tools/list");
+    assert.deepEqual(listed.result.tools, []);
+  } finally {
+    child.kill();
+  }
+});
+
 test("each supported host starts the MCP server and launches its native executor", async () => {
   const root = resolve(import.meta.dirname, "../..");
   const server = join(root, "dist", "mcp", "server.js");

@@ -47,4 +47,4 @@ run("node scripts/build.mjs");
 
 console.log("\n[setup] ✓ done. The plugin is built at dist/mcp/server.js.");
 console.log("[setup]   - smoke test:   npm run smoke");
-console.log("[setup]   - install:      see README.md → 'Install (Codex)'");
+console.log("[setup]   - install:      see README.md → 'Install (Cursor CLI)'");
