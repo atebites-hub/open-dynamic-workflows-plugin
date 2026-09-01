@@ -209,8 +209,8 @@ structure — the example only teaches the primitives.
 
 Call the installed `workflow` tool with the script inline.
 
-**Cursor** (`cursor-agent plugin marketplace add <this-repo>` then install from Customize /
-`~/.cursor/plugins/local`): omitted `executor` runs on **cursor**. Name `grok` / `zcode` /
+**Cursor** (`node scripts/install-cursor-cli.mjs`, then `agent mcp enable open-dynamic-workflows`;
+or `agent --plugin-dir <this-repo>`): omitted `executor` runs on **cursor**. Name `grok` / `zcode` /
 `claude` / `codex` to use another CLI.
 
 **Grok Build** (`grok plugin marketplace add …` / `grok plugin install open-dynamic-workflows --trust`):
