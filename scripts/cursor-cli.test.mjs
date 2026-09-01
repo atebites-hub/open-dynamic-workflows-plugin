@@ -46,23 +46,30 @@ function assertExactKeys(object, allowed, label) {
   }
 }
 
-test("Cursor marketplace.json matches the official additionalProperties:false schema", () => {
+test("Cursor marketplace.json is a schema-valid three-plugin team catalog", () => {
   const marketplace = readJson(cursorMarketplacePath);
+  const pluginName = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/;
   assertExactKeys(marketplace, MARKETPLACE_ROOT_KEYS, ".cursor-plugin/marketplace.json");
-  assert.equal(typeof marketplace.name, "string");
+  assert.equal(marketplace.name, "atebites-cursor-plugins");
   assert.ok(Array.isArray(marketplace.plugins));
-  assert.equal(marketplace.plugins.length, 1);
+  assert.equal(marketplace.plugins.length, 3);
   if (marketplace.owner !== undefined) {
     assertExactKeys(marketplace.owner, MARKETPLACE_OWNER_KEYS, "marketplace.owner");
     assert.equal(typeof marketplace.owner.name, "string");
   }
-  const plugin = marketplace.plugins[0];
-  assertExactKeys(plugin, MARKETPLACE_PLUGIN_KEYS, "marketplace.plugins[0]");
-  assert.equal(plugin.name, "open-dynamic-workflows");
-  assert.equal(plugin.source, "plugins/open-dynamic-workflows");
-  assert.equal(typeof plugin.description, "string");
-  assert.equal(plugin.version, undefined);
-  assert.equal(plugin.keywords, undefined);
+  for (const [index, plugin] of marketplace.plugins.entries()) {
+    assertExactKeys(plugin, MARKETPLACE_PLUGIN_KEYS, `marketplace.plugins[${index}]`);
+    assert.match(plugin.name, pluginName);
+    assert.equal(typeof plugin.source, "string");
+    assert.ok(plugin.source.length > 0);
+    assert.equal(typeof plugin.description, "string");
+    assert.equal(plugin.version, undefined);
+    assert.equal(plugin.keywords, undefined);
+  }
+  const byName = Object.fromEntries(marketplace.plugins.map((plugin) => [plugin.name, plugin]));
+  assert.equal(byName["open-dynamic-workflows"].source, "plugins/open-dynamic-workflows");
+  assert.equal(byName.ponytail.source, "https://github.com/DietrichGebert/ponytail");
+  assert.equal(byName["sol-advisor"].source, "https://github.com/atebites-hub/sol-advisor");
 });
 
 test("repo and marketplace package ship a dual-format Agent Plugin manifest", () => {

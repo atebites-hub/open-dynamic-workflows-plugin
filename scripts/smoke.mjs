@@ -346,16 +346,25 @@ const cursorPkgMcp = JSON.parse(
 );
 
 expect("Cursor marketplace names this plugin with a local source", () => {
-  const plugin = cursorMarketplace.plugins[0];
-  assert.equal(plugin.name, "open-dynamic-workflows");
-  assert.equal(plugin.source, "plugins/open-dynamic-workflows");
-  assert.notEqual(plugin.source, "./");
+  const odw = cursorMarketplace.plugins.find((plugin) => plugin.name === "open-dynamic-workflows");
+  assert.equal(odw.source, "plugins/open-dynamic-workflows");
+  assert.notEqual(odw.source, "./");
 });
 expect("Cursor marketplace plugin entries match the official schema", () => {
-  const plugin = cursorMarketplace.plugins[0];
-  assert.deepEqual(Object.keys(plugin).sort(), ["description", "name", "source"]);
-  assert.equal(plugin.version, undefined);
-  assert.equal(plugin.keywords, undefined);
+  assert.equal(cursorMarketplace.name, "atebites-cursor-plugins");
+  assert.equal(cursorMarketplace.plugins.length, 3);
+  assert.deepEqual(
+    cursorMarketplace.plugins.map((plugin) => plugin.name),
+    ["open-dynamic-workflows", "ponytail", "sol-advisor"],
+  );
+  for (const plugin of cursorMarketplace.plugins) {
+    assert.deepEqual(Object.keys(plugin).sort(), ["description", "name", "source"]);
+    assert.equal(plugin.version, undefined);
+    assert.equal(plugin.keywords, undefined);
+  }
+  const byName = Object.fromEntries(cursorMarketplace.plugins.map((plugin) => [plugin.name, plugin]));
+  assert.equal(byName.ponytail.source, "https://github.com/DietrichGebert/ponytail");
+  assert.equal(byName["sol-advisor"].source, "https://github.com/atebites-hub/sol-advisor");
   for (const key of Object.keys(cursorMarketplace)) {
     assert.ok(["name", "owner", "metadata", "plugins"].includes(key), key);
   }

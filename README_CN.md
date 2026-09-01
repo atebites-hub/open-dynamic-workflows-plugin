@@ -29,6 +29,24 @@ agent mcp list
 
 未指名 `executor` 时跑在 `cursor` 上（`agent` / `cursor-agent` / `CURSOR_BIN`）。嵌套 Cursor 叶子会设置 `ODW_CURSOR_LEAF=1`，不得再加载本插件的 `workflow` 工具。
 
+## Cursor 团队 marketplace
+
+本仓库就是团队 marketplace 目录（`.cursor-plugin/marketplace.json`，名称 `atebites-cursor-plugins`）。在 **Dashboard → Plugins → Import from Repo** 导入：
+
+```text
+https://github.com/atebites-hub/open-dynamic-workflows-plugin
+```
+
+然后在 **Customize** 里安装：
+
+- **open-dynamic-workflows** — 本仓库（`plugins/open-dynamic-workflows`）
+- **ponytail** — https://github.com/DietrichGebert/ponytail
+- **sol-advisor** — https://github.com/atebites-hub/sol-advisor
+
+远程 `source` 使用 GitHub URL（官方 schema 允许）。插件条目只有 `name`、`source`、`description`。若 Import from Repo 只索引仓库内路径，把 ponytail 和 sol-advisor 的 GitHub 仓库再加为 marketplace——这里不内嵌它们的源码。
+
+**open-dynamic-workflows** 的 CLI 安装仍是上面的 `node scripts/install-cursor-cli.mjs`。
+
 一段动态工作流就是**编排大量子 agent 的纯 JS 脚本**。模型为任务编写脚本；插件内置的
 运行时执行它，把每个 `agent()` 调用扇出成一个真实的 `grok`、`claude`、`codex` 或 `zcode`
 子进程。控制流（循环、分支、扇出）在确定性 JS 里——LLM 的活只发生在叶子节点。
@@ -119,7 +137,7 @@ return { results }
 `marketplace.json` 都用本地 `./` 源）。
 
 ```
-├── .cursor-plugin/marketplace.json # Cursor marketplace 目录（官方 schema）
+├── .cursor-plugin/marketplace.json # Cursor 团队 marketplace 目录（官方 schema）
 ├── .cursor-plugin/plugin.json      # Cursor 插件清单
 ├── plugin.json                     # Agent Plugins 清单（CLI --plugin-dir）
 ├── mcp.json                        # Cursor MCP 启动（${PLUGIN_ROOT}）

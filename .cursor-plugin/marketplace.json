@@ -1,16 +1,26 @@
 {
-  "name": "open-dynamic-workflows",
+  "name": "atebites-cursor-plugins",
   "owner": {
-    "name": "Open Dynamic Workflows"
+    "name": "atebites-hub"
   },
   "metadata": {
-    "description": "Dynamic workflow orchestration for Cursor — fan a deterministic script out across cursor, grok, zcode, claude, and codex subagents."
+    "description": "Team marketplace catalog for open-dynamic-workflows, ponytail, and sol-advisor."
   },
   "plugins": [
     {
       "name": "open-dynamic-workflows",
       "source": "plugins/open-dynamic-workflows",
       "description": "Dynamic workflow orchestration — workflow MCP tool, authoring skill, and /workflows command. Host-native default is cursor."
+    },
+    {
+      "name": "ponytail",
+      "source": "https://github.com/DietrichGebert/ponytail",
+      "description": "Lazy senior dev mode. Forces the simplest, shortest solution that actually works: YAGNI, stdlib first, no unrequested abstractions."
+    },
+    {
+      "name": "sol-advisor",
+      "source": "https://github.com/atebites-hub/sol-advisor",
+      "description": "Advisor guidance for Cursor: experimental detection; strict delegation disabled until resolved effort is authoritative."
     }
   ]
 }

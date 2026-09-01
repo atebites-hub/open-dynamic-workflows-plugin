@@ -33,6 +33,24 @@ Headless check: `agent -p --force --trust --workspace . --output-format json --a
 
 Omitted `executor` runs on `cursor` (`agent` / `cursor-agent` / `CURSOR_BIN`). Nested Cursor leaves set `ODW_CURSOR_LEAF=1` and must not reload this plugin's `workflow` tool.
 
+## Cursor team marketplace
+
+This repository is the team marketplace catalog (`.cursor-plugin/marketplace.json`, name `atebites-cursor-plugins`). In **Dashboard → Plugins → Import from Repo**, import:
+
+```text
+https://github.com/atebites-hub/open-dynamic-workflows-plugin
+```
+
+Then in **Customize**, install:
+
+- **open-dynamic-workflows** — this repo (`plugins/open-dynamic-workflows`)
+- **ponytail** — https://github.com/DietrichGebert/ponytail
+- **sol-advisor** — https://github.com/atebites-hub/sol-advisor
+
+Remote `source` values are GitHub URLs, which the [official marketplace schema](https://raw.githubusercontent.com/cursor/plugins/main/schemas/marketplace.schema.json) allows. Plugin entries only use `name`, `source`, and `description`. If Import from Repo only indexes in-repo paths, add the ponytail and sol-advisor GitHub repos as additional marketplaces — this catalog does not vendor those trees.
+
+CLI install for **open-dynamic-workflows** is still `node scripts/install-cursor-cli.mjs` above.
+
 ## Install (Grok Build)
 
 ```bash
@@ -128,7 +146,7 @@ the pipeline-vs-parallel decision, adversarial-verify / judge-panel / loop-until
 This repo is the Cursor, Grok, Codex, and ZCode marketplace and the plugin.
 
 ```
-├── .cursor-plugin/marketplace.json # Cursor marketplace catalog (official schema)
+├── .cursor-plugin/marketplace.json # Cursor team marketplace catalog (official schema)
 ├── .cursor-plugin/plugin.json      # Cursor plugin manifest
 ├── plugin.json                     # Agent Plugins manifest (CLI --plugin-dir)
 ├── mcp.json                        # Cursor MCP launch (${PLUGIN_ROOT}; IDE / plugin loader)
