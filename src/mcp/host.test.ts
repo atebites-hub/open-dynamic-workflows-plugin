@@ -55,6 +55,55 @@ test("unknown host has no default", () => {
   assert.equal(isGrokHost({ ZCODE_PLUGIN_ROOT: "/z" }), false);
 });
 
+test("Cursor CLI mcp.json can pin the host with ODW_HOST alone", () => {
+  // ~/.cursor/mcp.json written by the CLI installer has no PLUGIN_ROOT expansion.
+  assert.equal(defaultExecutorForHost({ ODW_HOST: "cursor" }), "cursor");
+});
+
+test("nested Cursor leaves hide the workflow tool even when ODW_HOST is set", async () => {
+  const root = resolve(import.meta.dirname, "../..");
+  const server = join(root, "dist", "mcp", "server.js");
+  const child = spawn(process.execPath, [server], {
+    env: {
+      ...process.env,
+      ODW_HOST: "cursor",
+      ODW_CURSOR_LEAF: "1",
+      CURSOR_PLUGIN_ROOT: root,
+    },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let output = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    output += chunk;
+  });
+  const request = (id: number, method: string) =>
+    new Promise<any>((resolveRequest, reject) => {
+      const body = JSON.stringify({ jsonrpc: "2.0", id, method });
+      child.stdin.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
+      const deadline = setTimeout(() => reject(new Error("nested-leaf MCP timed out")), 10_000);
+      const check = () => {
+        const match = /Content-Length:\s*(\d+)\r\n\r\n([\s\S]*)/i.exec(output);
+        if (!match) return;
+        const length = Number(match[1]);
+        if (Buffer.byteLength(match[2]) < length) return;
+        clearTimeout(deadline);
+        child.stdout.off("data", check);
+        output = match[2].slice(length);
+        resolveRequest(JSON.parse(match[2].slice(0, length)));
+      };
+      child.stdout.on("data", check);
+      check();
+    });
+  try {
+    await request(1, "initialize");
+    const listed = await request(2, "tools/list");
+    assert.deepEqual(listed.result.tools, []);
+  } finally {
+    child.kill();
+  }
+});
+
 test("each supported host starts the MCP server and launches its native executor", async () => {
   const root = resolve(import.meta.dirname, "../..");
   const server = join(root, "dist", "mcp", "server.js");

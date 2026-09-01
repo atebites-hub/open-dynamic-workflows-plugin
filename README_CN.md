@@ -5,14 +5,45 @@
 面向 **Cursor、Grok Build、Claude Code、Codex 和 ZCode** 的动态工作流编排——通过原生 `workflow` 工具和编写 skill，
 把一段确定性 JavaScript 脚本扇出成大量 CLI 子 agent。
 
-## 安装（Cursor）
+## 安装（Cursor CLI）
+
+需要 Cursor CLI（`agent`，`curl https://cursor.com/install -fsS | bash`）和 Node.js。不必打开 IDE 的 Customize。
 
 ```bash
-cursor-agent plugin marketplace add atebites-hub/open-dynamic-workflows-plugin
+curl -fsSL https://raw.githubusercontent.com/atebites-hub/open-dynamic-workflows-plugin/main/scripts/install-cursor-cli.sh | bash
+agent mcp enable open-dynamic-workflows
 ```
 
-然后在 Cursor **Customize** 里安装 **open-dynamic-workflows**（或拷到 `~/.cursor/plugins/local`）。
-未指名 `executor` 时跑在 `cursor` 上。
+若已克隆本仓库：
+
+```bash
+./scripts/install-cursor-cli.sh
+agent mcp enable open-dynamic-workflows
+```
+
+新的 `agent` 会话会带上 **`workflow` 工具**和 **`$open-dynamic-workflows`** skill。未指名
+`executor` 时跑在 `cursor` 上（`agent` / `cursor-agent` / `CURSOR_BIN`）。
+
+安装脚本会：把插件拷到 `~/.cursor/plugins/local/open-dynamic-workflows`，把 skill 拷到
+`~/.cursor/skills/open-dynamic-workflows`（CLI 从这里发现 skill；插件内 skill 在 `agent` 里
+历史上并不像 IDE 那样加载），并把带**绝对路径**的 MCP 命令合并进 `~/.cursor/mcp.json`
+（`ODW_HOST=cursor`）。Cursor CLI 的用户 MCP 配置不会展开 `${PLUGIN_ROOT}`（原样路径会让
+`agent mcp list` 报 Cannot find module）。
+
+`agent mcp list` / `agent mcp list-tools` 读的是 `~/.cursor/mcp.json`（以及项目
+`.cursor/mcp.json`），不是 `--plugin-dir`。可选：`agent --plugin-dir ~/.cursor/plugins/local/open-dynamic-workflows`
+用来加载斜杠命令（若该 CLI 版本会从 plugin-dir 加载插件组件）。嵌套的 `agent` 子进程不要再传
+本插件的 `--plugin-dir`；内置 Cursor executor 会设置 `ODW_CURSOR_LEAF=1` 并清掉 plugin-root
+环境变量，避免再次暴露 `workflow`。
+
+### Cursor IDE（Customize）
+
+```bash
+agent plugin marketplace add atebites-hub/open-dynamic-workflows-plugin
+```
+
+然后在 Cursor **Customize** 里安装 **open-dynamic-workflows**。若已经跑过上面的 CLI 安装脚本
+（它会写入 `~/.cursor/plugins/local`），这一步可以跳过。
 
 一段动态工作流就是**编排大量子 agent 的纯 JS 脚本**。模型为任务编写脚本；插件内置的
 运行时执行它，把每个 `agent()` 调用扇出成一个真实的 `grok`、`claude`、`codex` 或 `zcode`
@@ -104,10 +135,14 @@ return { results }
 `marketplace.json` 都用本地 `./` 源）。
 
 ```
+├── plugin.json                     # Agent Plugins 清单（`agent --plugin-dir`）
+├── .cursor-plugin/                 # Cursor marketplace / 插件清单
+├── mcp.json                        # Cursor MCP 启动（${PLUGIN_ROOT} + stdio）
+├── scripts/install-cursor-cli.*    # Cursor CLI 安装（无需 Customize）
 ├── .grok-plugin/marketplace.json   # Grok marketplace 目录
 ├── .grok-plugin/plugin.json        # Grok 插件清单
 ├── .grok-plugin/mcp.json           # Grok MCP 启动配置（GROK_PLUGIN_ROOT）
-├── plugins/open-dynamic-workflows/ # Grok marketplace 安装包（Grok 拒绝 source "./"）
+├── plugins/open-dynamic-workflows/ # Grok/Cursor marketplace 安装包（Grok 拒绝 source "./"）
 ├── marketplace.json                # ZCode marketplace 清单
 ├── .zcode-plugin/plugin.json       # ZCode 插件清单
 ├── .claude-plugin/plugin.json      # Claude Code 兼容镜像

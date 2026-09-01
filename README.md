@@ -9,17 +9,51 @@ A dynamic workflow is a **plain-JS script that orchestrates subagents at scale**
 writes the script for the task; the plugin's bundled runtime executes it, fanning each
 `agent()` call out to a real `cursor-agent`, `grok`, `claude`, `codex`, or `zcode` subprocess.
 
-## Install (Cursor)
+## Install (Cursor CLI)
+
+Requires the Cursor CLI (`agent` — `curl https://cursor.com/install -fsS | bash`) and Node.js.
+No IDE Customize step.
 
 ```bash
-cursor-agent plugin marketplace add atebites-hub/open-dynamic-workflows-plugin
+curl -fsSL https://raw.githubusercontent.com/atebites-hub/open-dynamic-workflows-plugin/main/scripts/install-cursor-cli.sh | bash
+agent mcp enable open-dynamic-workflows
 ```
 
-Then install **open-dynamic-workflows** from Cursor **Customize** (or copy the plugin package
-into `~/.cursor/plugins/local`). The CLI can add a marketplace; install is via Customize /
-local plugins — there is no separate non-interactive `plugin install` on older CLIs.
+From a checkout:
 
-Omitted `executor` runs on `cursor` (`cursor-agent` / `CURSOR_BIN`).
+```bash
+./scripts/install-cursor-cli.sh
+agent mcp enable open-dynamic-workflows
+```
+
+A new `agent` session then has the **`workflow` tool** and the **`$open-dynamic-workflows`**
+skill. Omitted `executor` runs on `cursor` (`agent` / `cursor-agent` / `CURSOR_BIN`).
+
+The installer writes three things:
+
+- plugin copy or link at `~/.cursor/plugins/local/open-dynamic-workflows`
+- authoring skill at `~/.cursor/skills/open-dynamic-workflows` (CLI skill discovery; plugin
+  skills historically do not load in `agent` the way they do in the IDE)
+- `~/.cursor/mcp.json` with an **absolute** `node …/dist/mcp/server.js` command and
+  `ODW_HOST=cursor` — Cursor CLI user MCP config does not expand `${PLUGIN_ROOT}`
+  (a literal `${PLUGIN_ROOT}` path fails `agent mcp list` with "Cannot find module")
+
+`agent mcp list` / `agent mcp list-tools` read `~/.cursor/mcp.json` (and project
+`.cursor/mcp.json`), not `--plugin-dir`. Optional: `agent --plugin-dir ~/.cursor/plugins/local/open-dynamic-workflows`
+for slash commands if your CLI build loads plugin components that way. Nested `agent`
+workers must not pass `--plugin-dir` of this plugin; the bundled Cursor executor sets
+`ODW_CURSOR_LEAF=1` and unsets plugin-root env so nested sessions do not re-advertise
+`workflow`.
+
+### Cursor IDE (Customize)
+
+```bash
+agent plugin marketplace add atebites-hub/open-dynamic-workflows-plugin
+```
+
+Then install **open-dynamic-workflows** from Cursor **Customize**, or skip this if you already
+ran the CLI installer (it populated `~/.cursor/plugins/local`). Plugin-loader MCP still uses
+`${PLUGIN_ROOT}` in this repo's `mcp.json`.
 
 ## Install (Grok Build)
 
@@ -114,13 +148,14 @@ the pipeline-vs-parallel decision, adversarial-verify / judge-panel / loop-until
 This repo is the Cursor, Grok, Codex, and ZCode marketplace and the plugin.
 
 ```
+├── plugin.json                     # Agent Plugins manifest (`agent --plugin-dir`)
 ├── .cursor-plugin/marketplace.json # Cursor marketplace catalog
 ├── .cursor-plugin/plugin.json      # Cursor plugin manifest
-├── mcp.json                        # Cursor MCP launch (${PLUGIN_ROOT})
+├── mcp.json                        # Cursor MCP launch (${PLUGIN_ROOT} + stdio)
 ├── .grok-plugin/marketplace.json   # Grok marketplace catalog
 ├── .grok-plugin/plugin.json        # Grok plugin manifest (repo-as-plugin / grok plugin install .)
 ├── .grok-plugin/mcp.json           # Grok MCP launch (GROK_PLUGIN_ROOT, 8h tool timeout)
-├── plugins/open-dynamic-workflows/ # Grok marketplace package (catalog source; Grok rejects "./")
+├── plugins/open-dynamic-workflows/ # Grok/Cursor marketplace package (catalog source; Grok rejects "./")
 ├── .agents/plugins/marketplace.json # Codex marketplace manifest
 ├── .codex-plugin/plugin.json       # Codex plugin manifest
 ├── .codex-mcp.json                 # Codex MCP launch config
@@ -133,6 +168,7 @@ This repo is the Cursor, Grok, Codex, and ZCode marketplace and the plugin.
 ├── src/mcp/server.ts               # MCP server source (the `workflow` tool)
 ├── dist/mcp/server.js              # COMMITTED self-contained bundle (what runs)
 ├── scripts/{build,setup,smoke}.mjs # dev build + smoke pipeline
+├── scripts/install-cursor-cli.*    # Cursor CLI installer + tests
 ├── open-dynamic-workflows/         # git submodule (ODW source — dev only)
 └── zcode-cli/                      # git submodule (dev convenience; not bundled)
 ```

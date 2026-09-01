@@ -1,9 +1,11 @@
 {
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "open-dynamic-workflows",
   "version": "0.3.0",
   "description": "Dynamic workflow orchestration for Cursor — fan a deterministic script out across cursor, grok, zcode, claude, and codex subagents.",
   "author": {
-    "name": "Open Dynamic Workflows"
+    "name": "Open Dynamic Workflows",
+    "url": "https://github.com/atebites-hub/open-dynamic-workflows-plugin"
   },
   "homepage": "https://github.com/atebites-hub/open-dynamic-workflows-plugin",
   "repository": "https://github.com/atebites-hub/open-dynamic-workflows-plugin",
@@ -13,8 +15,5 @@
     "orchestration",
     "subagent",
     "cursor"
-  ],
-  "skills": "./skills/",
-  "commands": "./commands/",
-  "mcpServers": "./mcp.json"
+  ]
 }

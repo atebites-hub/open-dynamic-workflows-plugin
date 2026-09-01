@@ -49,6 +49,10 @@ const EXECUTORS = {
 };
 const SANDBOX_META_KEY = "codex/sandbox-state-meta";
 const DEFAULT_EXECUTOR = defaultExecutorForHost();
+// Nested grok/cursor leaves inherit this plugin MCP when the parent wrote
+// ~/.cursor/mcp.json (CLI install) or when a plugin loader re-discovers local
+// plugins. ODW unsets plugin-root env and sets ODW_*_LEAF=1; this server then
+// advertises no tools. Do not pass --plugin-dir of this plugin on child argv.
 const NESTED_LEAF = process.env.ODW_GROK_LEAF === "1" || process.env.ODW_CURSOR_LEAF === "1";
 
 // The tool's `description` IS the authoring contract — the model reads it to learn how

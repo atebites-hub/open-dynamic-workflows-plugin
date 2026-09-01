@@ -14,5 +14,7 @@
     "subagent",
     "cursor"
   ],
+  "skills": "./skills/",
+  "commands": "./commands/",
   "mcpServers": "./mcp.json"
 }

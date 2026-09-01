@@ -324,6 +324,7 @@ expect("nested marketplace package has no generated-copy drift", () => {
     "skills",
     "commands",
     "mcp.json",
+    "plugin.json",
     ".cursor-plugin/plugin.json",
     ".grok-plugin/plugin.json",
     ".grok-plugin/mcp.json",
@@ -352,10 +353,13 @@ expect("Cursor marketplace names this plugin with a local source", () => {
 expect("Cursor plugin manifest points at Cursor MCP config", () => {
   assert.equal(cursorPlugin.name, "open-dynamic-workflows");
   assert.equal(cursorPlugin.mcpServers, "./mcp.json");
+  assert.equal(cursorPlugin.skills, "./skills/");
+  assert.equal(cursorPlugin.commands, "./commands/");
 });
-expect("Cursor MCP launch uses PLUGIN_ROOT not ZCode-only substitution", () => {
+expect("Cursor MCP launch uses PLUGIN_ROOT for plugin loaders and stdio type", () => {
   for (const cfg of [cursorMcp.mcpServers["open-dynamic-workflows"], cursorPkgMcp.mcpServers["open-dynamic-workflows"]]) {
     assert.equal(cfg.command, "node");
+    assert.equal(cfg.type, "stdio");
     assert.ok(cfg.args.some((a) => String(a).includes("${PLUGIN_ROOT}")));
     assert.ok(!JSON.stringify(cfg).includes("${ZCODE_PLUGIN_ROOT}"));
     assert.ok(!JSON.stringify(cfg).includes("${GROK_PLUGIN_ROOT}"));
@@ -363,6 +367,25 @@ expect("Cursor MCP launch uses PLUGIN_ROOT not ZCode-only substitution", () => {
     assert.equal(cfg.env.ODW_HOST, "cursor");
   }
   assert.ok(existsSync(resolve(root, "plugins", "open-dynamic-workflows", ".cursor-plugin", "plugin.json")));
+});
+expect("root Agent Plugins manifest is loadable via --plugin-dir", () => {
+  const manifest = JSON.parse(readFileSync(resolve(root, "plugin.json"), "utf8"));
+  const packaged = JSON.parse(
+    readFileSync(resolve(root, "plugins", "open-dynamic-workflows", "plugin.json"), "utf8"),
+  );
+  for (const body of [manifest, packaged]) {
+    assert.equal(body.$schema, "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json");
+    assert.equal(body.name, "open-dynamic-workflows");
+    assert.equal(body.version, "0.3.0");
+    assert.ok(!Object.hasOwn(body, "mcpServers"), "Agent Plugins plugin.json is a closed schema");
+  }
+  assert.equal(cursorMcp.$schema, "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json");
+  assert.equal(cursorPkgMcp.$schema, "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json");
+});
+expect("Cursor CLI installer is a committed, runnable script", () => {
+  assert.ok(existsSync(resolve(root, "scripts", "install-cursor-cli.mjs")));
+  assert.ok(existsSync(resolve(root, "scripts", "install-cursor-cli.sh")));
+  assert.ok(existsSync(resolve(root, "scripts", "install-cursor-cli.test.mjs")));
 });
 
 // Send one JSON-RPC line per request, collect the framed responses. The server speaks
@@ -1039,7 +1062,7 @@ async function assertHostDefault(label, extraEnv, expectedText) {
       },
     });
     const call = await wait((m) => m.id === 2, 30000);
-    expect(`${label} host omitted-executor uses ${label}`, () => {
+    expect(`${label} host omitted-executor returned ${expectedText}`, () => {
       const parsed = JSON.parse(call.result.content[0].text);
       assert.equal(call.result.isError, false);
       assert.equal(parsed.value, expectedText);
@@ -1054,8 +1077,72 @@ async function assertHostDefault(label, extraEnv, expectedText) {
 }
 
 await assertHostDefault("cursor", { ODW_HOST: "cursor", CURSOR_PLUGIN_ROOT: root }, "ODW_FAKE_CURSOR_OK");
+await assertHostDefault("cursor-cli", { ODW_HOST: "cursor" }, "ODW_FAKE_CURSOR_OK");
 await assertHostDefault("zcode", { ODW_HOST: "zcode", ZCODE_PLUGIN_ROOT: root }, "ODW_FAKE_ZCODE_OK");
 await assertHostDefault("claude", { ODW_HOST: "claude", CLAUDE_PLUGIN_ROOT: root }, "ODW_FAKE_CLAUDE_OK");
+
+console.log("\n[smoke] nested Cursor leaf hides workflow (CLI mcp.json inheritance)…");
+const nestedLeaf = spawn(process.execPath, [serverPath], {
+  cwd: scratch,
+  env: {
+    ...process.env,
+    ODW_HOST: "cursor",
+    ODW_CURSOR_LEAF: "1",
+    CURSOR_PLUGIN_ROOT: root,
+  },
+  stdio: ["pipe", "pipe", "pipe"],
+});
+let nestedBuf = Buffer.alloc(0);
+nestedLeaf.stdout.on("data", (c) => (nestedBuf = Buffer.concat([nestedBuf, c])));
+try {
+  const nestedBody = JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "nested", version: "0" } },
+  });
+  nestedLeaf.stdin.write(`Content-Length: ${Buffer.byteLength(nestedBody)}\r\n\r\n${nestedBody}`);
+  await new Promise((resolveWait, rejectWait) => {
+    const t = setTimeout(() => rejectWait(new Error("nested-leaf initialize timeout")), 10_000);
+    const check = () => {
+      const { messages, rest } = readFramed(nestedBuf);
+      const hit = messages.find((m) => m.id === 1);
+      if (hit) {
+        clearTimeout(t);
+        nestedLeaf.stdout.off("data", check);
+        nestedBuf = rest;
+        resolveWait(hit);
+      }
+    };
+    nestedLeaf.stdout.on("data", check);
+    check();
+  });
+  const listBody = JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" });
+  nestedLeaf.stdin.write(`Content-Length: ${Buffer.byteLength(listBody)}\r\n\r\n${listBody}`);
+  const nestedList = await new Promise((resolveWait, rejectWait) => {
+    const t = setTimeout(() => rejectWait(new Error("nested-leaf tools/list timeout")), 10_000);
+    const check = () => {
+      const { messages, rest } = readFramed(nestedBuf);
+      const hit = messages.find((m) => m.id === 2);
+      if (hit) {
+        clearTimeout(t);
+        nestedLeaf.stdout.off("data", check);
+        nestedBuf = rest;
+        resolveWait(hit);
+      }
+    };
+    nestedLeaf.stdout.on("data", check);
+    check();
+  });
+  expect("ODW_CURSOR_LEAF hides the workflow tool", () => {
+    assert.deepEqual(nestedList.result.tools, []);
+  });
+} catch (err) {
+  failed++;
+  console.error(`[smoke] nested-leaf fatal: ${err.message}`);
+} finally {
+  nestedLeaf.kill();
+}
 
 console.log(`\n[smoke] ${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);
