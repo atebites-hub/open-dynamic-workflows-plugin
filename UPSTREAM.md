@@ -35,6 +35,17 @@ The nested forks own factory behavior (immutable `routingPolicy` in ODW core; `Z
 
 Do not drop that packaging to “just vendor upstream.” Do not bump [atebites-plugins](https://github.com/atebites-hub/atebites-plugins) in the same change as a nested pin.
 
+## Native alignment (required)
+
+The nested ODW core and this packaging repo stay on Claude, Codex, and Cursor. Native-first
+prefers Claude ultracode, Codex/ChatGPT ultra, and Cursor multitask when they fit; that is
+not a reason to skip ODW or to treat a Cursor multitask investigation as “ODW unused.”
+Align: detect those modes, do not fight them, document seating/composition or an explicit
+defer, and fill cross-executor / multi-harness gaps.
+
+**Status:** required by policy. Proven only after live QA. Do not soft-pass. User-facing
+wording lives in [README.md](./README.md#native-alignment-required).
+
 ## Pin bump policy
 
 Bump a nested pin only after **that fork** is ready, then let the marketplace consume *this* plugin SHA:

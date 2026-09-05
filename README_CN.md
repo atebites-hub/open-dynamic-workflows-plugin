@@ -202,9 +202,24 @@ executor、model 或 reasoning effort 不一致会在启动前失败。嵌套工
 - **同步工具。** `workflow()` 运行到完成再返回（v1）。带 task 通知的后台执行是 v2 增强。
 - **本地证据。** `.odw/` 产物包含工作流脚本、prompt 和 agent 响应；新建的 run 文件仅 owner
   可读写。请保持 `.odw/` 被 gitignore。
-- **没有 ultracode 自动决策。** 推荐是被动的——skill 和工具描述告诉模型何时适合用工作流。
-  由模型决定；不强制注入任何东西。
+- **没有 ultracode 自动决策。** ODW 不会像 Claude ultracode 那样自动注入工作流。skill
+  和工具描述保持被动，由模型决定。这不是在 Claude、Codex 或 Cursor 上跳过 ODW 的许可——见
+  [原生对齐为必须](#原生对齐为必须)。
 - **遥测。** `zcode_result` 信封目前把 `costUsd`/`inputTokens`/`outputTokens` 报为 null
   （`telemetryAvailable: false`）。在 zcode launcher 填上这些字段之前，插件如实报 0。
+
+## 原生对齐为必须
+
+ODW 不是「在 Claude / Codex / Cursor 上跳过」。原生优先是指任务适合时优先用宿主自己的编排：
+
+- **Claude Code：** ultracode
+- **Codex / ChatGPT：** ultra
+- **Cursor：** multitask
+
+ODW **必须对齐**这些模式——检测它们，不要对抗。写明 ODW 如何并列或组合进原生 run，或明确推迟。
+补上原生模式覆盖不到的缺口（跨 executor 扇出、多 harness 脚本、可恢复 journal、受治理的
+`routingPolicy`）。调查 Cursor multitask 是对齐工作，不表示 ODW 闲置。
+
+**状态：** 政策要求对齐。只有经过现场 QA 才算已证明。不要 soft-pass。
 
 许可证：MIT。

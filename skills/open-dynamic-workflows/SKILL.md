@@ -301,3 +301,9 @@ const result = await runWorkflow({
 > script and calls it; ultracode auto-decides; runs in the background under `/workflows`).
 > This skill targets running the SAME contract on this standalone runtime, so a script you
 > write here is portable to either.
+>
+> Native-first prefers Claude ultracode, Codex/ChatGPT ultra, or Cursor multitask when they
+> fit. That is not “skip ODW” on those hosts. Detect the native mode and do not fight it;
+> seat or compose beside it, or defer explicitly. Cross-executor / multi-harness
+> orchestration is an ODW gap to fill. Alignment is required by policy and proven only
+> after live QA — do not soft-pass.
