@@ -225,10 +225,29 @@ still overrides that host default.
   with task notifications is a v2 enhancement.
 - **Local evidence.** `.odw/` artifacts contain workflow scripts, prompts, and agent responses;
   newly written run files are owner-only. Keep `.odw/` gitignored.
-- **No ultracode auto-decide.** The recommendation is passive — the skill and tool
-  descriptions tell the model when a workflow fits. The model decides; nothing is force-injected.
+- **No ultracode auto-decide.** ODW does not auto-inject a workflow the way Claude ultracode
+  can. The skill and tool descriptions stay passive; the model decides. That is not a license
+  to skip ODW on Claude, Codex, or Cursor — see [Native alignment required](#native-alignment-required).
 - **Telemetry.** The `zcode_result` envelope currently reports `costUsd`/`inputTokens`/
   `outputTokens` as null (`telemetryAvailable: false`). The plugin reports zeros honestly
   until the zcode launcher fills these in.
+
+## Native alignment required
+
+ODW is not “skip on Claude / Codex / Cursor.” Native-first means prefer the host’s own
+orchestration when it fits the task:
+
+- **Claude Code:** ultracode
+- **Codex / ChatGPT:** ultra
+- **Cursor:** multitask
+
+ODW must **align** with those modes — detect them, do not fight them. Document how ODW
+seats beside or composes with the native run, or write down an explicit defer. Fill the
+gaps native modes do not cover (cross-executor fan-out, multi-harness scripts, resumable
+journals, governed `routingPolicy`). Investigating Cursor multitask is alignment work; it
+does not mean ODW is unused.
+
+**Status:** alignment is required by policy. Treat it as proven only after live QA. Do not
+soft-pass.
 
 License: MIT.
