@@ -5,3 +5,4 @@
 [submodule "zcode-cli"]
 	path = zcode-cli
 	url = https://github.com/atebites-hub/zcode-cli.git
+	branch = main

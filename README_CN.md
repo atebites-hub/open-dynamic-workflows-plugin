@@ -161,7 +161,7 @@ return { results }
 
 ### 面向维护者 / 贡献者
 
-用户运行的 `dist/mcp/server.js` 由 submodule 构建并提交。clone 之后：
+用户运行的 `dist/mcp/server.js` 由 submodule 构建并提交。嵌套 remote、pin 策略和周中同步见 [UPSTREAM.md](./UPSTREAM.md)。clone 之后：
 
 ```bash
 npm run setup    # 初始化 submodule + 锁定安装 + 构建 ODW + esbuild → dist/mcp/server.js
