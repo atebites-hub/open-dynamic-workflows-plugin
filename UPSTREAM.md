@@ -46,6 +46,8 @@ Bump a nested pin only after **that fork** is ready, then let the marketplace co
 
 `zcode-cli` pin bumps do not change the bundle. `open-dynamic-workflows` pin bumps usually do.
 
+Plugin CI also runs `npm --prefix open-dynamic-workflows audit --package-lock-only --audit-level high` against the **pinned** ODW lock. That lock (and current ODW `main` as of this writing) still has `fast-uri@3.1.5` (`GHSA-5jgf-p345-68v8` and related). The fix belongs on the ODW fork. Do not edit the submodule tree here to silence it, and do not treat a red audit on an unchanged ODW pin as a reason to bump that pin in the same PR as a zcode-cli retarget.
+
 ## Weekday sync
 
 `.github/workflows/sync-nested-pins.yml` (UTC cron on weekdays, plus `workflow_dispatch`) compares each gitlink to that remote’s `main`. When a remote moved, it opens **one** PR titled exactly `chore: sync nested pins`. If a PR with that title is already open, the workflow leaves it alone.
