@@ -173,8 +173,9 @@ This repo is the Cursor, Grok, Codex, and ZCode marketplace and the plugin.
 
 ### For maintainers / contributors
 
-The `dist/mcp/server.js` that users run is built from the submodules and committed. After
-cloning:
+The `dist/mcp/server.js` that users run is built from the submodules and committed.
+Nested remotes, pin policy, and the weekday sync workflow are in [UPSTREAM.md](./UPSTREAM.md).
+After cloning:
 
 ```bash
 npm run setup    # init submodules + locked installs + build ODW + esbuild → dist/mcp/server.js

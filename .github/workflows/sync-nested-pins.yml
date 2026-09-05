@@ -1,0 +1,103 @@
+name: Sync nested pins
+
+on:
+  schedule:
+    # Weekday check (GitHub Actions cron is UTC).
+    - cron: "23 13 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: odw-plugin-sync-nested-pins
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'atebites-hub/open-dynamic-workflows-plugin'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout packaging repo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.10.0"
+          cache: npm
+
+      - name: "Open chore: sync nested pins PR when remotes move"
+        env:
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+
+          existing="$(gh pr list --base main --state open --json title,url \
+            --jq '.[] | select(.title == "chore: sync nested pins") | .url' | head -n 1 || true)"
+          if [[ -n "${existing}" ]]; then
+            echo "Open sync PR already exists: ${existing}"
+            exit 0
+          fi
+
+          set +e
+          report="$(bash scripts/sync-nested-pins.sh check 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "${report}"
+          if [[ "${status}" -eq 0 ]]; then
+            echo "nested pins match remote main; nothing to sync"
+            exit 0
+          fi
+          if [[ "${status}" -ne 1 ]]; then
+            echo "pin check failed"
+            exit "${status}"
+          fi
+
+          odw_old="$(git rev-parse HEAD:open-dynamic-workflows)"
+          zcode_old="$(git rev-parse HEAD:zcode-cli)"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bash scripts/sync-nested-pins.sh apply
+
+          odw_new="$(git rev-parse :open-dynamic-workflows)"
+          zcode_new="$(git rev-parse :zcode-cli)"
+
+          if [[ "${odw_old}" != "${odw_new}" ]]; then
+            git submodule update --init open-dynamic-workflows
+            npm ci --ignore-scripts
+            node scripts/build.mjs
+          fi
+
+          branch="chore/sync-nested-pins-${zcode_new:0:7}-${odw_new:0:7}"
+          git checkout -B "${branch}"
+          git add open-dynamic-workflows zcode-cli dist plugins/open-dynamic-workflows
+          if git diff --cached --quiet; then
+            echo "index unchanged after apply"
+            exit 0
+          fi
+          git commit --no-verify -m "chore: sync nested pins"
+          git push -u origin "HEAD:${branch}"
+
+          docs_url="https://github.com/${GITHUB_REPOSITORY}/blob/${branch}/UPSTREAM.md"
+          body="$(printf '%s\n' \
+            "Automated weekday check of nested submodule remotes." \
+            "" \
+            "| Path | Was | Now |" \
+            "| --- | --- | --- |" \
+            "| \`open-dynamic-workflows\` | \`${odw_old}\` | \`${odw_new}\` |" \
+            "| \`zcode-cli\` | \`${zcode_old}\` | \`${zcode_new}\` |" \
+            "" \
+            "Merge only after each moved fork’s CI + smoke are green (or the gap is recorded) and this plugin’s CI passes. \`dist/\` is rebuilt in this PR when the ODW core pin moved." \
+            "" \
+            "Do **not** bump atebites-plugins marketplace pins in this PR. See [UPSTREAM.md](${docs_url})." \
+          )"
+
+          gh pr create --base main --head "${branch}" --title "chore: sync nested pins" --body "${body}"
