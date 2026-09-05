@@ -1,0 +1,46 @@
+name: Cleanup artifacts
+
+on:
+  schedule:
+    # Weekly Monday (GitHub Actions cron is UTC).
+    - cron: "0 0 * * 1"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+concurrency:
+  group: odw-plugin-cleanup-artifacts
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    if: github.repository == 'atebites-hub/open-dynamic-workflows-plugin'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Delete artifacts older than 3 days
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          cutoff="$(date -u -d '3 days ago' +%Y-%m-%dT%H:%M:%SZ)"
+          echo "Deleting artifacts created before ${cutoff}"
+
+          ids="$(gh api --paginate "/repos/${GITHUB_REPOSITORY}/actions/artifacts" \
+            --jq ".artifacts[] | select(.expired == false and .created_at < \"${cutoff}\") | .id")"
+
+          if [[ -z "${ids}" ]]; then
+            echo "No artifacts older than 3 days"
+            exit 0
+          fi
+
+          deleted=0
+          while IFS= read -r id; do
+            echo "Deleting artifact ${id}"
+            gh api --method DELETE "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}"
+            deleted=$((deleted + 1))
+          done <<< "${ids}"
+
+          echo "Deleted ${deleted} artifact(s)"
