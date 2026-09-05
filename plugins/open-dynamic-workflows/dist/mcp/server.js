@@ -8399,8 +8399,10 @@ function makeGrokExecutor() {
 var grokExecutor = (opts) => makeGrokExecutor()(opts);
 
 // open-dynamic-workflows/dist/executor/cursor/cursor.js
-import { existsSync } from "node:fs";
-import { delimiter, join as join2 } from "node:path";
+import { spawnSync } from "node:child_process";
+import { realpathSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, delimiter, join as join2 } from "node:path";
 
 // open-dynamic-workflows/dist/executor/cursor/cursor-json.js
 function isObject4(v) {
@@ -8502,25 +8504,118 @@ var CHILD_UNSET2 = [
   "CURSOR_PLUGIN_ROOT",
   "PLUGIN_ROOT",
   "GROK_PLUGIN_ROOT",
+  "GROK_PLUGIN_DATA",
   "CLAUDE_PLUGIN_ROOT",
+  "CLAUDE_PLUGIN_DATA",
   "ZCODE_PLUGIN_ROOT"
 ];
-function whichOnPath(name) {
+function isExecutableFile(path4) {
+  try {
+    return statSync(path4).isFile();
+  } catch {
+    return false;
+  }
+}
+function* whichAllOnPath(name) {
   const path4 = process.env.PATH ?? "";
   for (const dir of path4.split(delimiter)) {
     if (!dir)
       continue;
     const candidate = join2(dir, name);
-    if (existsSync(candidate))
-      return candidate;
+    if (isExecutableFile(candidate))
+      yield candidate;
   }
-  return void 0;
 }
-function resolveCursorBin() {
+function wellKnownLocalBin(name) {
+  return join2(homedir(), ".local", "bin", name);
+}
+function pathLooksLikeGrok(bin) {
+  const normalized = bin.replace(/\\/g, "/");
+  if (normalized.includes("/.grok/"))
+    return true;
+  try {
+    const real = realpathSync(bin).replace(/\\/g, "/");
+    if (real.includes("/.grok/"))
+      return true;
+  } catch {
+  }
+  return false;
+}
+function readCliHelp(bin) {
+  try {
+    const result = spawnSync(bin, ["--help"], {
+      encoding: "utf8",
+      timeout: 2500,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: process.env
+    });
+    return `${result.stdout ?? ""}
+${result.stderr ?? ""}`;
+  } catch {
+    return "";
+  }
+}
+function helpLooksLikeGrok(help) {
+  if (help.includes("streaming-json"))
+    return true;
+  if (help.includes("--always-approve") && !help.includes("--approve-mcps"))
+    return true;
+  if (/Usage:\s*grok\b/i.test(help))
+    return true;
+  return false;
+}
+function helpLooksLikeCursor(help) {
+  if (help.includes("--approve-mcps"))
+    return true;
+  if (help.includes("--trust") && (help.includes("--print") || /(^|\s)-p(\s|,|$)/.test(help))) {
+    return true;
+  }
+  return false;
+}
+function isCursorCliBinary(bin) {
+  if (!isExecutableFile(bin))
+    return false;
+  const base = basename(bin);
+  if (base === "cursor-agent" || base === "cursor-agent.exe") {
+    return !pathLooksLikeGrok(bin);
+  }
+  if (pathLooksLikeGrok(bin))
+    return false;
+  const help = readCliHelp(bin);
+  if (helpLooksLikeGrok(help))
+    return false;
+  return helpLooksLikeCursor(help);
+}
+var cachedResolveKey = "";
+var cachedResolveBin = "";
+function resolveCursorBinUncached() {
   const override = process.env.CURSOR_BIN?.trim();
   if (override)
     return override;
-  return whichOnPath("cursor-agent") ?? whichOnPath("agent") ?? "cursor-agent";
+  for (const candidate of whichAllOnPath("cursor-agent")) {
+    if (isCursorCliBinary(candidate))
+      return candidate;
+  }
+  const localCursorAgent = wellKnownLocalBin("cursor-agent");
+  if (isCursorCliBinary(localCursorAgent))
+    return localCursorAgent;
+  for (const candidate of whichAllOnPath("agent")) {
+    if (isCursorCliBinary(candidate))
+      return candidate;
+  }
+  const localAgent = wellKnownLocalBin("agent");
+  if (isCursorCliBinary(localAgent))
+    return localAgent;
+  return "cursor-agent";
+}
+function resolveCursorBin() {
+  const key = `${process.env.CURSOR_BIN ?? ""}\0${process.env.PATH ?? ""}\0${process.env.HOME ?? ""}`;
+  if (key === cachedResolveKey)
+    return cachedResolveBin;
+  const resolved = resolveCursorBinUncached();
+  cachedResolveKey = key;
+  cachedResolveBin = resolved;
+  return resolved;
 }
 function composePrompt(opts) {
   const parts = [];
@@ -8540,6 +8635,8 @@ function buildCursorArgs(opts) {
     "--output-format",
     opts.schema !== void 0 ? "json" : "stream-json",
     "--force",
+    "--trust",
+    "--approve-mcps",
     "--workspace",
     opts.cwd
   ];
