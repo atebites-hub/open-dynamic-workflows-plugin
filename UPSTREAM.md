@@ -17,7 +17,7 @@ Historical only — never pin this SHA again:
 
 - Old zcode-cli gitlink `a97033febe288e2e15ff3e4fd5517aef5a42e369` exists on [atebites-hub/zcode-cli-legacy](https://github.com/atebites-hub/zcode-cli-legacy), not on the true fork. Recursive `git submodule update --init` fails until the gitlink is a commit that exists on `atebites-hub/zcode-cli`.
 
-Current pins are the gitlinks (`git ls-tree HEAD open-dynamic-workflows zcode-cli`). This bump pins `zcode-cli` to true-fork `main` at `5c6063d1092fda396403faae97bfabee377dc9ac` (Linux OAuth callback [#4](https://github.com/atebites-hub/zcode-cli/pull/4) + Desktop OAuth→apiKey [#6](https://github.com/atebites-hub/zcode-cli/pull/6)). Leave the ODW core SHA alone unless that fork’s CI + smoke are green and a rebuild of `dist/` is part of the same change.
+Current pins are the gitlinks (`git ls-tree HEAD open-dynamic-workflows zcode-cli`). This bump pins `zcode-cli` to true-fork `main` at `2a760900a6622648aa7f08762b7cfe9eb9cf2c32` (TUI first-run Sign-in / `/login` loop [#5](https://github.com/atebites-hub/zcode-cli/pull/5)). Leave the ODW core SHA alone unless that fork’s CI + smoke are green and a rebuild of `dist/` is part of the same change.
 
 ## Owners
 
