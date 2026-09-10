@@ -17,7 +17,7 @@ Historical only — never pin this SHA again:
 
 - Old zcode-cli gitlink `a97033febe288e2e15ff3e4fd5517aef5a42e369` exists on [atebites-hub/zcode-cli-legacy](https://github.com/atebites-hub/zcode-cli-legacy), not on the true fork. Recursive `git submodule update --init` fails until the gitlink is a commit that exists on `atebites-hub/zcode-cli`.
 
-Current pins are the gitlinks (`git ls-tree HEAD open-dynamic-workflows zcode-cli`). This bump pins `zcode-cli` to true-fork `main` at `2a760900a6622648aa7f08762b7cfe9eb9cf2c32` (TUI first-run Sign-in / `/login` loop [#5](https://github.com/atebites-hub/zcode-cli/pull/5)). Leave the ODW core SHA alone unless that fork’s CI + smoke are green and a rebuild of `dist/` is part of the same change.
+Current pins are the gitlinks (`git ls-tree HEAD open-dynamic-workflows zcode-cli`). This bump pins `zcode-cli` to true-fork `main` at `46b7240e72b30d14d43d4082295ce2c5994e7d4d` (merged upstream sync [#10](https://github.com/atebites-hub/zcode-cli/pull/10)) and `open-dynamic-workflows` to `c4fbd88231f5c5a8aab8cad65521f4d5d82809b6` (docs: refresh UPSTREAM.md divergence inventory [#12](https://github.com/atebites-hub/open-dynamic-workflows/pull/12)). Rebuild `dist/` when the ODW core pin moves.
 
 ## Owners
 
