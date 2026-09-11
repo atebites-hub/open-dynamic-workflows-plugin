@@ -1,0 +1,4 @@
+{
+  "name": "open-dynamic-workflows",
+  "description": "ODW authoring skill for Antigravity. Use scripts/install-antigravity-cli.mjs to register its absolute MCP launch path."
+}

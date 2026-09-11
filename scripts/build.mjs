@@ -16,7 +16,7 @@
 // Run: `node scripts/build.mjs` (after `npm ci --ignore-scripts` for esbuild).
 // Also run via `npm run setup`, which chains submodule init + install + this build.
 
-import { chmod, cp, mkdir, rm } from "node:fs/promises";
+import { chmod, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { build } from "esbuild";
@@ -96,3 +96,21 @@ for (const relative of [
   await cp(source, target);
 }
 console.log(`[build] grok plugin package → ${grokPluginDir}`);
+
+// Host-specific packages reuse the exact same server bundle and authoring skill.
+for (const host of ["copilot", "antigravity"]) {
+  const destination = resolve(root, "plugins", host, "open-dynamic-workflows");
+  await mkdir(destination, { recursive: true });
+  await cp(resolve(root, "dist"), resolve(destination, "dist"), { recursive: true });
+  await cp(resolve(root, "skills"), resolve(destination, "skills"), { recursive: true });
+}
+
+// Default component discovery is additive on Claude. Ship truly isolated roots.
+for (const host of ["claude", "codex"]) {
+  const destination = resolve(root, "native", host, "open-dynamic-workflows");
+  await mkdir(resolve(destination, `.${host}-plugin`), { recursive: true });
+  const manifest = JSON.parse(await readFile(resolve(root, `.${host}-plugin/plugin.json`), "utf8"));
+  manifest.skills = "./skills/";
+  await writeFile(resolve(destination, `.${host}-plugin/plugin.json`), JSON.stringify(manifest, null, 2) + "\n");
+  await cp(resolve(root, "native", host, "skills"), resolve(destination, "skills"), { recursive: true });
+}

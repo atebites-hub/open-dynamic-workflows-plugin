@@ -1,6 +1,6 @@
 {
   "name": "open-dynamic-workflows",
-  "description": "Dynamic workflow orchestration for Grok Build, Codex, and ZCode — fan a deterministic script out across many CLI subagents.",
+  "description": "ODW for Cursor, Grok Build, ZCode, Antigravity and Copilot, with safe worktree isolation. Claude and Codex hosts use native ultracode/ultra instead.",
   "owner": {
     "name": "Open Dynamic Workflows",
     "url": "https://github.com/atebites-hub/open-dynamic-workflows-plugin"
@@ -8,10 +8,13 @@
   "plugins": [
     {
       "name": "open-dynamic-workflows",
-      "version": "0.3.0",
-      "description": "Dynamic workflow orchestration — fan a deterministic script out across grok, claude, codex, and zcode subagents. Provides a workflow MCP tool, an authoring skill, and a /workflows command.",
+      "version": "0.4.0",
+      "description": "ODW for Cursor, Grok Build, ZCode, Antigravity and Copilot, with safe worktree isolation. Claude and Codex hosts use native ultracode/ultra instead.",
       "category": "developer-tools",
-      "source": { "type": "local", "path": "./plugins/open-dynamic-workflows" },
+      "source": {
+        "type": "local",
+        "path": "./plugins/open-dynamic-workflows"
+      },
       "keywords": [
         "workflow",
         "orchestration",

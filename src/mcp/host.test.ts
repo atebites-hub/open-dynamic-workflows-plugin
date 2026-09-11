@@ -5,7 +5,7 @@ import { delimiter, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
 
-import { defaultExecutorForHost, isGrokHost } from "./host.ts";
+import { defaultExecutorForHost, isGrokHost, nativeOrchestrationAdvice } from "./host.ts";
 
 test("ODW_HOST wins over other signals", () => {
   assert.equal(
@@ -20,6 +20,11 @@ test("ODW_HOST wins over other signals", () => {
   assert.equal(defaultExecutorForHost({ ODW_HOST: "codex" }), "codex");
   assert.equal(defaultExecutorForHost({ ODW_HOST: "claude" }), "claude");
   assert.equal(defaultExecutorForHost({ ODW_HOST: "cursor" }), "cursor");
+  assert.equal(defaultExecutorForHost({ ODW_HOST: "antigravity" }), "antigravity");
+  assert.equal(defaultExecutorForHost({ ODW_HOST: "copilot" }), "copilot");
+  assert.match(nativeOrchestrationAdvice("claude")!, /ultracode/);
+  assert.match(nativeOrchestrationAdvice("codex")!, /ultra mode/);
+  assert.equal(nativeOrchestrationAdvice("antigravity"), undefined);
 });
 
 test("Codex ODW_REQUIRE_CWD maps to codex before plugin-root aliases", () => {
@@ -51,16 +56,17 @@ test("plugin-root env maps to the matching CLI; Grok beats the Claude alias", ()
 test("unknown host has no default", () => {
   assert.equal(defaultExecutorForHost({}), undefined);
   assert.equal(defaultExecutorForHost({ ODW_HOST: "nope" }), undefined);
+  assert.equal(defaultExecutorForHost({ ODW_HOST: "nope", GROK_PLUGIN_ROOT: "/g" }), undefined);
   assert.equal(isGrokHost({ GROK_PLUGIN_ROOT: "/g" }), true);
   assert.equal(isGrokHost({ ZCODE_PLUGIN_ROOT: "/z" }), false);
 });
 
-test("nested cursor leaves advertise no workflow tool", async () => {
+test("the shared ODW leaf marker suppresses nested workflow tools", async () => {
   const root = resolve(import.meta.dirname, "../..");
   const server = join(root, "dist", "mcp", "server.js");
   const child = spawn(process.execPath, [server], {
     cwd: root,
-    env: { ...process.env, ODW_HOST: "cursor", ODW_CURSOR_LEAF: "1" },
+    env: { ...process.env, ODW_HOST: "cursor", ODW_CURSOR_LEAF: "", ODW_LEAF: "1" },
     stdio: ["pipe", "pipe", "pipe"],
   });
   let output = "";
@@ -110,7 +116,12 @@ test("each supported host starts the MCP server and launches its native executor
 const kind = process.env.ODW_FAKE_KIND;
 if (process.env.ODW_FAKE_LAUNCH_LOG) require("node:fs").appendFileSync(process.env.ODW_FAKE_LAUNCH_LOG, kind + "\\n");
 const finish = () => {
-  if (kind === "codex") {
+  if (kind === "antigravity") {
+    console.log(JSON.stringify({event:"result",result:{status:"SUCCESS",response:"HOST_OK",conversation_id:"fake"}}));
+  } else if (kind === "copilot") {
+    console.log(JSON.stringify({type:"assistant.message",data:{content:"HOST_OK"}}));
+    console.log(JSON.stringify({type:"result",exitCode:0,sessionId:"fake"}));
+  } else if (kind === "codex") {
     console.log(JSON.stringify({type:"thread.started",thread_id:"fake-thread"}));
     console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:"HOST_OK"}}));
     console.log(JSON.stringify({type:"turn.completed",usage:{input_tokens:1,output_tokens:1}}));
@@ -136,6 +147,8 @@ finish();
     ["claude", "claude"],
     ["grok", "grok"],
     ["zcode", "zcode"],
+    ["antigravity", "antigravity"],
+    ["copilot", "copilot"],
     ["invalid", "invalid"],
   ] as const;
   const launchCount = async () => {
@@ -159,6 +172,8 @@ finish();
           ...(host === "cursor" ? { CURSOR_BIN: fake } : {}),
           ...(host === "grok" ? { GROK_BIN: fake } : {}),
           ...(host === "zcode" ? { ZCODE_BIN: fake } : {}),
+          ...(host === "antigravity" ? { ANTIGRAVITY_BIN: fake } : {}),
+          ...(host === "copilot" ? { COPILOT_BIN: fake } : {}),
           ...(host === "codex" ? { ODW_REQUIRE_CWD: "1" } : {}),
         },
         stdio: ["pipe", "pipe", "pipe"],
@@ -187,7 +202,8 @@ finish();
       });
       await request(1, "initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "host-test", version: "0" } });
       const listed = await request(2, "tools/list");
-      assert.equal(listed.result.tools.length, 1, `${host} did not advertise workflow`);
+      const nativeOnly = host === "claude" || host === "codex";
+      assert.equal(listed.result.tools.length, nativeOnly ? 0 : 1, `${host} advertised the wrong tools`);
       const call = await request(3, "tools/call", {
         name: "workflow",
         ...(host === "codex" ? { _meta: { "codex/sandbox-state-meta": { sandboxCwd: `file://${directory}` } } } : {}),
@@ -196,7 +212,11 @@ finish();
           script: `export const meta = { name: 'host-${host}', description: 'host startup' }\nreturn await agent('ok')\n`,
         },
       });
-      if (host === "invalid") {
+      if (nativeOnly) {
+        assert.equal(call.result.isError, true);
+        assert.match(call.result.content[0].text, host === "claude" ? /ultracode/ : /ultra mode/);
+        assert.equal(await launchCount(), launchesBefore, "native-only host launched an ODW worker");
+      } else if (host === "invalid") {
         assert.equal(call.result.isError, true, "invalid ODW_HOST must reject omitted executor");
         assert.equal(await launchCount(), launchesBefore, "invalid host launched a subprocess");
       } else {

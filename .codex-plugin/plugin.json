@@ -1,7 +1,7 @@
 {
   "name": "open-dynamic-workflows",
-  "version": "0.3.0",
-  "description": "Run deterministic JavaScript workflows across Codex or ZCode subagents.",
+  "version": "0.4.0",
+  "description": "ODW for Cursor, Grok Build, ZCode, Antigravity and Copilot, with safe worktree isolation. Claude and Codex hosts use native ultracode/ultra instead.",
   "author": {
     "name": "Open Dynamic Workflows",
     "url": "https://github.com/atebites-hub/open-dynamic-workflows-plugin"
@@ -9,16 +9,26 @@
   "homepage": "https://github.com/atebites-hub/open-dynamic-workflows-plugin",
   "repository": "https://github.com/atebites-hub/open-dynamic-workflows-plugin",
   "license": "MIT",
-  "keywords": ["workflow", "orchestration", "subagent", "codex"],
-  "skills": "./skills/",
-  "mcpServers": "./.codex-mcp.json",
+  "keywords": [
+    "workflow",
+    "orchestration",
+    "subagent",
+    "codex"
+  ],
+  "skills": "./native/codex/skills/",
   "interface": {
     "displayName": "Open Dynamic Workflows",
-    "shortDescription": "Run deterministic multi-agent workflows",
+    "shortDescription": "Use native ultra mode on Codex",
     "developerName": "Open Dynamic Workflows",
     "category": "Developer Tools",
-    "capabilities": ["Interactive", "Read", "Write"],
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
     "websiteURL": "https://github.com/atebites-hub/open-dynamic-workflows-plugin",
-    "defaultPrompt": ["Use Open Dynamic Workflows for this large multi-agent task."]
+    "defaultPrompt": [
+      "Recommend native ultra mode without changing my selected model."
+    ]
   }
 }

@@ -1,0 +1,13 @@
+{
+  "name": "open-dynamic-workflows",
+  "owner": {
+    "name": "atebites-hub"
+  },
+  "plugins": [
+    {
+      "name": "open-dynamic-workflows",
+      "source": "./native/claude/open-dynamic-workflows",
+      "description": "Native ultracode guidance only; no workflow MCP or worker activation."
+    }
+  ]
+}

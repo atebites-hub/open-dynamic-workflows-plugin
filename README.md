@@ -1,13 +1,39 @@
-# open-dynamic-workflows (Cursor + Grok Build + Claude Code + Codex + ZCode plugin)
+# Open Dynamic Workflows
 
 [中文文档](./README_CN.md)
 
-Dynamic workflow orchestration for **Cursor, Grok Build, Claude Code, Codex, and ZCode** — fan a deterministic
+Dynamic workflow orchestration for **Cursor, Grok Build, ZCode, Antigravity, and Copilot** — fan a deterministic
 JavaScript script out across many CLI subagents through a native `workflow` tool and authoring skill.
 
 A dynamic workflow is a **plain-JS script that orchestrates subagents at scale**. The model
 writes the script for the task; the plugin's bundled runtime executes it, fanning each
 `agent()` call out to a real `cursor-agent`, `grok`, `claude`, `codex`, or `zcode` subprocess.
+
+## Harness policy (2026-09-09)
+
+Claude harnesses use native **ultracode**; Codex/ChatGPT harnesses use native
+**ultra** mode. Recommend that mode without changing the chosen model. Do not
+activate or call ODW from either host. This supersedes older alignment advice.
+
+ODW is used by Cursor, Grok Build, ZCode, Antigravity and Copilot. Other harnesses
+are integration gaps until an adapter and live evidence exist, not additional
+policy exclusions. Legacy explicit Claude/Codex worker adapters remain available
+to standalone SDK callers; they do not enable ODW in those host applications.
+
+## Worktree safety
+
+Use `isolation: 'worktree'` for workers that mutate files concurrently, not for
+every read-only task. The first isolated worker pins the caller HEAD for the whole
+run, including nested workflows. Staged/unstaged caller edits are not copied or
+discarded; commit required shared inputs before an isolated run. A caller inside
+a repository subdirectory stays in that subdirectory inside each worker checkout.
+
+Only successful pristine worktrees at their original commit are removed, without
+force. New commits, changed/untracked/ignored files, failed or cancelled workers,
+and uncertain cleanup retain the checkout. Use `worktreeNotes` and the agent
+trace `cwd` to inspect and integrate the result; no changes are auto-merged into
+the caller. Retained commits remain reachable through their worktree. Worktrees
+are Git isolation, not a security sandbox: native permission checks remain in force.
 
 ## Install (Cursor CLI)
 
@@ -61,22 +87,38 @@ grok plugin install open-dynamic-workflows --trust
 Open a new Grok session (or press `r` in the Plugins tab). Omitted `executor` runs on `grok`.
 The plugin is self-contained; no project-local ODW checkout or build is needed.
 
-## Install (Codex)
+## Claude and Codex: native mode only
 
-```bash
-codex plugin marketplace add atebites-hub/open-dynamic-workflows-plugin
-codex plugin add open-dynamic-workflows@open-dynamic-workflows
+Use Claude ultracode or Codex/ChatGPT ultra mode. These plugin manifests now
+provide only native-mode guidance, not an ODW MCP server. The server also rejects
+stale Claude/Codex host configurations with an actionable mode recommendation.
+
+## Install (Antigravity CLI)
+
+After cloning/building this repository:
+
+```sh
+node scripts/install-antigravity-cli.mjs
 ```
 
-Open a new Codex session. The plugin is self-contained; no project-local ODW checkout or build is
-needed. Codex calls must pass the active workspace as `cwd` when invoking `workflow`.
+The native CLI registers an absolute MCP command and imports the authoring skill.
+No undocumented plugin-root substitution is used. Keep the checkout in place and
+start a fresh session. Desktop/IDE seating requires its own live verification.
+Use `ANTIGRAVITY_BIN` (or `AGY_BIN`) for an explicit CLI path. New worker sessions
+use `--new-project` at their worktree cwd. Headless write permission must be
+authorized for those paths; `SUCCESS` with `denied_actions` is treated as failure.
 
-## Install (Claude Code)
+## Install (Copilot)
 
-Install the repository as a Claude Code plugin (or validate the checked-in
-`.claude-plugin/plugin.json` mirror), then enable the `open-dynamic-workflows` MCP server.
-Omitted `executor` runs on `claude`; the server uses the Claude project directory when `cwd` is
-omitted.
+```sh
+copilot plugin install atebites-hub/open-dynamic-workflows-plugin:plugins/copilot/open-dynamic-workflows
+```
+
+Restart the session after install. `COPILOT_BIN` selects an explicit CLI binary.
+The adapter requires the JSONL interface present in Copilot CLI 1.0.83. It keeps
+path verification enabled, does not enable all paths/URLs, and reports quota or
+permission errors instead of claiming an empty successful run. Model and effort
+remain per-worker selections; unavailable billing quota is not an adapter pass.
 
 ## Install (ZCode users)
 
@@ -232,22 +274,26 @@ still overrides that host default.
   `outputTokens` as null (`telemetryAvailable: false`). The plugin reports zeros honestly
   until the zcode launcher fills these in.
 
-## Native alignment required
+## Harness policy (2026-09-09)
 
-ODW is not “skip on Claude / Codex / Cursor.” Native-first means prefer the host’s own
-orchestration when it fits the task:
+Claude harnesses use native **ultracode**; Codex/ChatGPT harnesses use native
+**ultra** mode. Recommend that mode without changing the chosen model. Do not
+activate or call ODW from either host. This supersedes older alignment advice.
 
-- **Claude Code:** ultracode
-- **Codex / ChatGPT:** ultra
-- **Cursor:** multitask
-
-ODW must **align** with those modes — detect them, do not fight them. Document how ODW
-seats beside or composes with the native run, or write down an explicit defer. Fill the
-gaps native modes do not cover (cross-executor fan-out, multi-harness scripts, resumable
-journals, governed `routingPolicy`). Investigating Cursor multitask is alignment work; it
-does not mean ODW is unused.
-
-**Status:** alignment is required by policy. Treat it as proven only after live QA. Do not
-soft-pass.
+ODW is used by Cursor, Grok Build, ZCode, Antigravity and Copilot. Other harnesses
+are integration gaps until an adapter and live evidence exist, not additional
+policy exclusions. Legacy explicit Claude/Codex worker adapters remain available
+to standalone SDK callers; they do not enable ODW in those host applications.
 
 License: MIT.
+
+### Native-only installation roots
+
+Claude and Codex install the small packages under
+`native/claude/open-dynamic-workflows` and `native/codex/open-dynamic-workflows`.
+Do not install the development repository root on those hosts: native auto-
+discovery can otherwise load root workflow skills and the ZCode MCP config.
+The published advice-only roots contain one native-orchestration skill and no
+MCP configuration. Claude external catalogs use the documented `git-subdir`
+source with the reviewed release SHA; Codex's own catalog points at its native
+package directory. Other hosts retain the full workflow package.

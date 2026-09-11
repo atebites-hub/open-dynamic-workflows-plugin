@@ -226,7 +226,7 @@ test("CLI-written mcp.json can spawn the committed server (absolute path, ODW_HO
     const line = child.stdout.trim().split(/\r?\n/).pop();
     const parsed = JSON.parse(line);
     assert.equal(parsed.result.serverInfo.name, "open-dynamic-workflows");
-    assert.match(child.stderr, /default=cursor/);
+    assert.match(child.stderr, /host=cursor/);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

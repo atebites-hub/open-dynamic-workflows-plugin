@@ -1,0 +1,16 @@
+{
+  "name": "open-dynamic-workflows",
+  "version": "0.4.0",
+  "description": "ODW for Copilot with host-specific workers and safe worktree retention.",
+  "skills": "./skills",
+  "mcpServers": {
+    "open-dynamic-workflows": {
+      "type": "local",
+      "command": "node",
+      "args": ["${PLUGIN_ROOT}/dist/mcp/server.js"],
+      "env": {"ODW_HOST": "copilot"},
+      "tools": ["*"],
+      "timeout": 28800000
+    }
+  }
+}

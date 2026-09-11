@@ -13,10 +13,22 @@
     "workflow",
     "orchestration",
     "subagent",
-    "fan-out",
-    "parallel",
-    "dynamic-workflows",
-    "grok"
+    "codex"
   ],
-  "mcpServers": "./.grok-plugin/mcp.json"
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Open Dynamic Workflows",
+    "shortDescription": "Use native ultra mode on Codex",
+    "developerName": "Open Dynamic Workflows",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/atebites-hub/open-dynamic-workflows-plugin",
+    "defaultPrompt": [
+      "Recommend native ultra mode without changing my selected model."
+    ]
+  }
 }
