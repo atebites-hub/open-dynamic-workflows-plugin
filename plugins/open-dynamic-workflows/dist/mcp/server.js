@@ -7133,6 +7133,7 @@ function buildGlobals(hooks) {
 
 // open-dynamic-workflows/dist/runtime/hooks.js
 import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
 import path2 from "node:path";
 
 // open-dynamic-workflows/dist/runtime/routing.js
@@ -7431,33 +7432,69 @@ function oneLine(s, max = 300) {
   const t = s.replace(/\s+/g, " ").trim();
   return t.length > max ? `${t.slice(0, max)}\u2026` : t;
 }
-function createWorktree(repoCwd, runDir, agentId) {
-  const wtDir = path2.join(runDir, "worktrees", `agent-${agentId}`);
-  execFileSync("git", ["worktree", "add", "--detach", wtDir], {
+function createWorktree(repoCwd, runId, agentId, baseCommit) {
+  const prefix = execFileSync("git", ["rev-parse", "--show-prefix"], {
+    cwd: repoCwd,
+    encoding: "utf8"
+  }).trim();
+  const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+    cwd: repoCwd,
+    encoding: "utf8"
+  }).trim();
+  const wtDir = path2.join(repoRoot, ".odw", "worktrees", `${runId}-agent-${agentId}`);
+  const branch = `odw/${runId}/agent-${agentId}`;
+  execFileSync("git", ["worktree", "add", "-b", branch, wtDir, baseCommit], {
     cwd: repoCwd,
     stdio: "ignore"
   });
-  return wtDir;
+  return { root: wtDir, cwd: path2.join(wtDir, prefix), branch };
 }
-function cleanupWorktree(repoCwd, wtDir) {
+function recordWorktree(ctx, id, root, base) {
+  const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
+  const artifacts = path2.join(ctx.runDir, "agents");
+  mkdirSync(artifacts, { recursive: true });
+  const diff = path2.join(artifacts, `agent-${id}.diff`);
+  writeFileSync(diff, git("diff", "--binary", base, "--"));
+  const receipt = {
+    root,
+    base,
+    branch: git("branch", "--show-current").trim(),
+    head: git("rev-parse", "HEAD").trim(),
+    diff,
+    status: git("status", "--porcelain", "--untracked-files=all", "--ignored")
+  };
+  const metadata = path2.join(artifacts, `agent-${id}.worktree.json`);
+  writeFileSync(metadata, JSON.stringify(receipt, null, 2) + "\n");
+  ctx.emit({ type: "log", message: `[worktree] agent ${id}: receipt=${metadata}; branch=${receipt.branch}; diff=${diff}`, phase: ctx.currentPhase.value, ts: nowIso() });
+}
+function cleanupWorktree(repoCwd, wtDir, baseCommit) {
   try {
-    const status = execFileSync("git", ["status", "--porcelain"], {
+    const head = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: wtDir,
+      encoding: "utf8"
+    }).trim();
+    if (head !== baseCommit)
+      return `retained ${wtDir}: worker HEAD ${head} differs from base ${baseCommit}`;
+    const status = execFileSync("git", ["status", "--porcelain", "--untracked-files=all", "--ignored"], {
       cwd: wtDir,
       encoding: "utf8"
     });
     if (status.trim() !== "")
-      return;
-    execFileSync("git", ["worktree", "remove", "--force", wtDir], {
+      return `retained ${wtDir}: changed, untracked, or ignored files`;
+    execFileSync("git", ["worktree", "remove", wtDir], {
       cwd: repoCwd,
       stdio: "ignore"
     });
+    return `removed pristine worktree ${wtDir}`;
   } catch (err) {
-    console.warn(`[hooks] worktree cleanup failed for ${wtDir}: ${String(err)}`);
+    return `retained ${wtDir}: cleanup could not prove safe removal (${String(err)})`;
   }
 }
 function createHooks(ctx, deps) {
   const agent = async (prompt, opts) => {
     const o = { ...opts ?? {} };
+    if (ctx.isolation === "worktree")
+      o.isolation = "worktree";
     Object.assign(o, resolveAgentRoute(ctx.routingPolicy, {
       ...o.executor !== void 0 ? { executor: o.executor } : {},
       ...o.model !== void 0 ? { model: o.model } : {},
@@ -7476,7 +7513,7 @@ function createHooks(ctx, deps) {
     }
     const label = o.label ?? prompt.slice(0, 60);
     const phase2 = o.phase ?? ctx.currentPhase.value;
-    const cached = ctx.takeCached(key);
+    const cached = o.isolation === "worktree" ? void 0 : ctx.takeCached(key);
     if (cached !== void 0) {
       ctx.emit({ type: "agent_start", agentId: id, label, phase: phase2, cached: true, ts: nowIso() });
       ctx.emit({
@@ -7500,11 +7537,20 @@ function createHooks(ctx, deps) {
     await deps.semaphore.acquire();
     ctx.emit({ type: "agent_start", agentId: id, label, phase: phase2, cached: false, ts: nowIso() });
     let worktreeDir = null;
+    let worktreeCommit = "";
+    let completed = false;
     try {
       let cwd = ctx.cwd;
       if (o.isolation === "worktree") {
-        worktreeDir = createWorktree(ctx.cwd, ctx.runDir, id);
-        cwd = worktreeDir;
+        deps.worktreeBase.commit ??= execFileSync("git", ["rev-parse", "HEAD"], {
+          cwd: ctx.cwd,
+          encoding: "utf8"
+        }).trim();
+        worktreeCommit = deps.worktreeBase.commit;
+        const worktree = createWorktree(ctx.cwd, ctx.runId, id, worktreeCommit);
+        worktreeDir = worktree.root;
+        cwd = worktree.cwd;
+        ctx.emit({ type: "log", message: `[worktree] agent ${id}: created ${worktreeDir}; branch=${worktree.branch}; base=${worktreeCommit}; cwd=${cwd}`, phase: phase2, ts: nowIso() });
       }
       const resolvedModel = o.model ?? ctx.defaultModel;
       const appendSystemPrompt = presetFor(o.agentType);
@@ -7571,6 +7617,7 @@ function createHooks(ctx, deps) {
         outputTokens: res.usage.outputTokens,
         ts: nowIso()
       });
+      completed = true;
       return value;
     } catch (e) {
       const aborted = ctx.abort.aborted;
@@ -7591,8 +7638,19 @@ function createHooks(ctx, deps) {
       throw e;
     } finally {
       deps.semaphore.release();
-      if (worktreeDir !== null)
-        cleanupWorktree(ctx.cwd, worktreeDir);
+      if (worktreeDir !== null) {
+        try {
+          recordWorktree(ctx, id, worktreeDir, worktreeCommit);
+        } catch (error) {
+          ctx.emit({ type: "log", message: `[worktree] retained ${worktreeDir}: evidence capture failed (${String(error)})`, phase: phase2, ts: nowIso() });
+          if (completed) {
+            ctx.noteAgentFailure();
+            throw error;
+          }
+        }
+        const disposition = completed && !ctx.abort.aborted ? cleanupWorktree(ctx.cwd, worktreeDir, worktreeCommit) : `retained ${worktreeDir}: agent failed or was cancelled`;
+        ctx.emit({ type: "log", message: `[worktree] agent ${id}: ${disposition}`, phase: phase2, ts: nowIso() });
+      }
     }
   };
   const parallel = async (thunks) => {
@@ -7733,6 +7791,7 @@ async function runWorkflow(options) {
   const concurrency = options.concurrency ?? Math.max(1, Math.min(16, os.cpus().length - 2));
   const sem = createSemaphore(concurrency);
   const counter = createCounter(TOTAL_AGENT_CAP);
+  const worktreeBase = {};
   let tokensSpent = 0;
   let failedAgents = 0;
   let admissionFailures = 0;
@@ -7775,6 +7834,7 @@ async function runWorkflow(options) {
         tokensSpent += n;
       },
       registryDir,
+      ...options.isolation !== void 0 ? { isolation: options.isolation } : {},
       ...options.model !== void 0 ? { defaultModel: options.model } : {},
       ...options.defaultExecutor !== void 0 ? { defaultExecutor: options.defaultExecutor } : {},
       ...options.agentTimeoutMs !== void 0 ? { agentTimeoutMs: options.agentTimeoutMs } : {},
@@ -7806,7 +7866,7 @@ async function runWorkflow(options) {
         emit({ type: "workflow_end", name, ok: childOk, ts: now() });
       }
     };
-    const hooks = createHooks(ctx, { semaphore: sem, runNested, args: scriptArgs });
+    const hooks = createHooks(ctx, { semaphore: sem, runNested, args: scriptArgs, worktreeBase });
     return await runScript(src, hooks);
   };
   emit({
@@ -8027,6 +8087,7 @@ function makeSubprocessExecutor(spec) {
           for (const key of unsetEnv)
             delete childEnv[key];
         }
+        childEnv.ODW_LEAF = "1";
         const child = spawn(spec.command, args, {
           cwd: opts.cwd,
           env: childEnv,
@@ -9134,16 +9195,146 @@ var zcodeExecutor = makeSubprocessExecutor({
   reduce: (events, { stderr, exitCode, opts }) => reduceZcode(events, { stderr, exitCode, opts })
 });
 
+// open-dynamic-workflows/dist/executor/antigravity/antigravity.js
+var object = (value) => value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
+var tokens = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+function buildAntigravityArgs(opts) {
+  if (opts.reasoningEffort && !["low", "medium", "high"].includes(opts.reasoningEffort)) {
+    throw new Error(`Antigravity does not support effort ${opts.reasoningEffort}`);
+  }
+  const prompt = [opts.appendSystemPrompt, opts.prompt].filter(Boolean).join("\n\n");
+  const args = ["--print", prompt, "--output-format", "stream-json", "--mode", "accept-edits"];
+  if (opts.resumeSessionId)
+    args.push("--conversation", opts.resumeSessionId);
+  else
+    args.push("--new-project");
+  if (opts.model)
+    args.push("--model", opts.model);
+  if (opts.reasoningEffort)
+    args.push("--effort", opts.reasoningEffort);
+  if (opts.schema)
+    args.push("--json-schema", JSON.stringify(opts.schema));
+  if (opts.timeoutMs !== void 0)
+    args.push("--print-timeout", `${Math.max(1, Math.ceil(opts.timeoutMs / 1e3))}s`);
+  return args;
+}
+function reduceAntigravityEvents(events, exitCode, stderr = "") {
+  const records = events.map(object);
+  const envelope = [...records].reverse().find((event) => event.event === "result" || typeof event.status === "string");
+  const result = object(envelope?.event === "result" ? envelope.result : envelope);
+  const denied = Array.isArray(result.denied_actions) && result.denied_actions.length > 0;
+  const ok2 = exitCode === 0 && result.status === "SUCCESS" && !denied;
+  const usage = object(result.usage);
+  const error = denied ? `Antigravity permission denied: ${JSON.stringify(result.denied_actions)}` : typeof result.error === "string" ? result.error : stderr.trim() || `Antigravity terminal status: ${result.status ?? "missing"}`;
+  return {
+    text: ok2 && typeof result.response === "string" ? result.response : error,
+    sessionId: typeof result.conversation_id === "string" ? result.conversation_id : null,
+    costUsd: 0,
+    resultSubtype: ok2 ? "success" : denied ? "permission_denied" : "antigravity_error",
+    isError: !ok2,
+    usage: { inputTokens: tokens(usage.input_tokens), outputTokens: tokens(usage.output_tokens) },
+    telemetryAvailable: typeof usage.input_tokens === "number" && typeof usage.output_tokens === "number",
+    ...result.structured_output !== void 0 ? { structuredOutput: result.structured_output } : {}
+  };
+}
+var antigravityExecutor = (opts) => makeSubprocessExecutor({
+  command: process.env.ANTIGRAVITY_BIN?.trim() || process.env.AGY_BIN?.trim() || "agy",
+  prepare: async (options) => ({ args: buildAntigravityArgs(options) }),
+  parseLine: (line) => {
+    try {
+      return JSON.parse(line);
+    } catch {
+      return null;
+    }
+  },
+  reduce: (events, context) => reduceAntigravityEvents(events, context.exitCode, context.stderr)
+})(opts);
+
+// open-dynamic-workflows/dist/executor/copilot/copilot.js
+var object2 = (value) => value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
+var tokens2 = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+function buildCopilotArgs(opts) {
+  if (opts.reasoningEffort && !["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(opts.reasoningEffort)) {
+    throw new Error(`Copilot does not support effort ${opts.reasoningEffort}`);
+  }
+  const prompt = [opts.appendSystemPrompt, opts.schema ? `Return only JSON matching this schema: ${JSON.stringify(opts.schema)}` : void 0, opts.prompt].filter(Boolean).join("\n\n");
+  const args = [
+    "-C",
+    opts.cwd,
+    "-p",
+    prompt,
+    "--output-format",
+    "json",
+    "--stream",
+    "off",
+    "--no-auto-update",
+    "--no-ask-user",
+    "--no-remote-export",
+    "--disable-builtin-mcps",
+    "--disable-mcp-server",
+    "open-dynamic-workflows",
+    "--allow-tool",
+    "write",
+    "--allow-tool",
+    "shell"
+  ];
+  if (opts.model)
+    args.push("--model", opts.model);
+  if (opts.reasoningEffort)
+    args.push("--effort", opts.reasoningEffort);
+  if (opts.resumeSessionId)
+    args.push(`--resume=${opts.resumeSessionId}`);
+  return args;
+}
+function reduceCopilotEvents(events, exitCode, schema = false, stderr = "") {
+  const records = events.map(object2);
+  const result = [...records].reverse().find((event) => event.type === "result");
+  const error = [...records].reverse().find((event) => event.type === "session.error");
+  const detail = object2(error?.data);
+  const ok2 = exitCode === 0 && result?.exitCode === 0 && error === void 0;
+  const text = records.filter((event) => event.type === "assistant.message" && !event.agentId).map((event) => object2(event.data).content).filter((value) => typeof value === "string").join("\n");
+  const usage = records.filter((event) => event.type === "assistant.usage").map((event) => object2(event.data));
+  let structuredOutput;
+  if (schema && ok2) {
+    try {
+      structuredOutput = JSON.parse(text);
+    } catch {
+    }
+  }
+  return {
+    text: ok2 ? text : typeof detail.message === "string" ? detail.message : stderr.trim() || "Copilot did not emit a successful terminal result",
+    sessionId: typeof result?.sessionId === "string" ? result.sessionId : null,
+    costUsd: 0,
+    resultSubtype: ok2 ? "success" : typeof detail.errorCode === "string" ? detail.errorCode : "copilot_error",
+    isError: !ok2,
+    usage: { inputTokens: usage.reduce((sum, value) => sum + tokens2(value.inputTokens), 0), outputTokens: usage.reduce((sum, value) => sum + tokens2(value.outputTokens), 0) },
+    telemetryAvailable: usage.some((value) => typeof value.inputTokens === "number" && typeof value.outputTokens === "number"),
+    ...structuredOutput !== void 0 ? { structuredOutput } : {}
+  };
+}
+var copilotExecutor = (opts) => makeSubprocessExecutor({
+  command: process.env.COPILOT_BIN?.trim() || "copilot",
+  prepare: async (options) => ({ args: buildCopilotArgs(options) }),
+  parseLine: (line) => {
+    try {
+      return JSON.parse(line);
+    } catch {
+      return null;
+    }
+  },
+  reduce: (events, context) => reduceCopilotEvents(events, context.exitCode, context.opts.schema !== void 0, context.stderr)
+})(opts);
+
 // src/mcp/server.ts
 import { realpath } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/mcp/host.ts
-var NAMED_HOSTS = /* @__PURE__ */ new Set(["cursor", "grok", "zcode", "codex", "claude"]);
+var NAMED_HOSTS = /* @__PURE__ */ new Set(["cursor", "grok", "zcode", "codex", "claude", "antigravity", "copilot"]);
 function defaultExecutorForHost(env = process.env) {
   const named = env.ODW_HOST?.trim();
-  if (named && NAMED_HOSTS.has(named)) return named;
+  if (named) return NAMED_HOSTS.has(named) ? named : void 0;
   if (env.ODW_REQUIRE_CWD === "1") return "codex";
   if (env.GROK_PLUGIN_ROOT?.trim()) return "grok";
   if (env.CURSOR_PLUGIN_ROOT?.trim() || env.PLUGIN_ROOT?.trim()) return "cursor";
@@ -9151,13 +9342,20 @@ function defaultExecutorForHost(env = process.env) {
   if (env.CLAUDE_PLUGIN_ROOT?.trim()) return "claude";
   return void 0;
 }
+function nativeOrchestrationAdvice(host) {
+  if (host === "claude") return "Claude harnesses use native ultracode. Enable ultracode in the host; ODW is not activated here. Keep the user's chosen model.";
+  if (host === "codex") return "Codex/ChatGPT harnesses use native ultra mode. Select ultra effort in the host; ODW is not activated here. Keep the user's chosen model.";
+  return void 0;
+}
 
 // src/mcp/server.ts
 var SERVER_INFO = {
   name: "open-dynamic-workflows",
-  version: "0.3.0"
+  version: "0.4.0"
 };
 var EXECUTORS = {
+  antigravity: antigravityExecutor,
+  copilot: copilotExecutor,
   cursor: cursorExecutor,
   zcode: zcodeExecutor,
   grok: grokExecutor,
@@ -9166,11 +9364,12 @@ var EXECUTORS = {
 };
 var SANDBOX_META_KEY = "codex/sandbox-state-meta";
 var DEFAULT_EXECUTOR = defaultExecutorForHost();
-var NESTED_LEAF = process.env.ODW_GROK_LEAF === "1" || process.env.ODW_CURSOR_LEAF === "1";
+var NATIVE_ADVICE = nativeOrchestrationAdvice(DEFAULT_EXECUTOR);
+var NESTED_LEAF = process.env.ODW_LEAF === "1" || process.env.ODW_GROK_LEAF === "1" || process.env.ODW_CURSOR_LEAF === "1";
 var WORKFLOW_TOOL = {
   name: "workflow",
   description: [
-    "Execute a dynamic workflow script that orchestrates Cursor, Grok, Claude, Codex, or ZCode subagents deterministically.",
+    "Execute a dynamic workflow script across Cursor, Grok Build, ZCode, Antigravity, and Copilot workers.",
     "A dynamic workflow is plain JavaScript (NOT TypeScript) that orchestrates subagents at scale:",
     "the model writes the script, this tool runs it.",
     "",
@@ -9186,8 +9385,9 @@ var WORKFLOW_TOOL = {
     "- These globals are injected into scope: agent(prompt, {executor, ...}), parallel(thunks),",
     "  pipeline(items, ...stages), phase(title), log(message), args, workflow(ref, args?).",
     "- Named workers: {executor:'cursor'}, {executor:'zcode'}, {executor:'grok'}, {executor:'claude'}, {executor:'codex'}.",
+    "  New workers: {executor:'antigravity'}, {executor:'copilot'}. Claude/Codex adapters remain explicit compatibility workers, not active ODW hosts.",
     "  When executor is omitted, the host CLI is used: cursor on Cursor, grok on Grok Build,",
-    "  zcode on ZCode, codex on Codex, claude on Claude Code. Name another worker to override.",
+    "  zcode on ZCode, antigravity on Antigravity, copilot on Copilot. Claude hosts use ultracode; Codex/ChatGPT hosts use ultra mode instead.",
     "  An unknown name fails the run.",
     "- Codex model overrides default reasoningEffort to 'medium'; set reasoningEffort explicitly",
     "  only when the selected model supports the requested value.",
@@ -9213,10 +9413,12 @@ var WORKFLOW_TOOL = {
     "  ZERO token spend, the rest run live.",
     "",
     "RESULT: the tool returns whatever the script `return`ed (its `value`), plus run metadata.",
-    "isError is true when !ok; swallowed leaf failures keep ok=true but appear in failedAgents",
+    "isError is true when !ok; even swallowed leaf failures make ok=false and appear in failedAgents",
     "with a resume hint.",
     "",
     "Artifacts (script snapshot, journal, per-agent traces) land under .odw/<name>/runs/<runId>/.",
+    "Use isolation:'worktree' for parallel mutations. One committed base is shared per run; caller subdirectories are preserved.",
+    "Only successful pristine worktrees are removed. Commits, dirty/ignored files, failures, and cancellations retain the checkout; inspect worktreeNotes and agent traces.",
     "Consult the $open-dynamic-workflows skill for full authoring guidance and worked patterns."
   ].join("\n"),
   inputSchema: {
@@ -9238,6 +9440,11 @@ var WORKFLOW_TOOL = {
       args: {
         description: "Any JSON value passed into the script as the `args` global. Verbatim."
       },
+      isolation: {
+        type: "string",
+        enum: ["worktree"],
+        description: "Isolate every worker in a named worktree and retain branch/diff receipts."
+      },
       resumeFromRunId: {
         type: "string",
         description: "Re-run a previous run by id. Completed agent() calls replay from the journal with zero token spend."
@@ -9255,7 +9462,7 @@ var WORKFLOW_TOOL = {
     }
   }
 };
-var TOOLS = NESTED_LEAF ? [] : [WORKFLOW_TOOL];
+var TOOLS = NESTED_LEAF || NATIVE_ADVICE ? [] : [WORKFLOW_TOOL];
 var activeCalls = /* @__PURE__ */ new Map();
 var responseFraming = "content-length";
 function writeMessage(message) {
@@ -9277,14 +9484,21 @@ function fail(id, code, message) {
   writeMessage({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
 }
 async function runWorkflowTool(args, signal, sandboxCwd) {
+  if (NATIVE_ADVICE) {
+    return { content: [{ type: "text", text: NATIVE_ADVICE }], isError: true };
+  }
   const {
     cwd: requestedCwd,
     script,
     scriptPath,
     args: workflowArgs,
     resumeFromRunId,
-    routingPolicy
+    routingPolicy,
+    isolation
   } = args;
+  if (isolation !== void 0 && isolation !== "worktree") {
+    return { content: [{ type: "text", text: "workflow isolation must be worktree when supplied." }], isError: true };
+  }
   if (!script && !scriptPath) {
     return {
       content: [
@@ -9301,7 +9515,7 @@ async function runWorkflowTool(args, signal, sandboxCwd) {
       content: [
         {
           type: "text",
-          text: "Nested grok/cursor leaves cannot start another workflow."
+          text: "ODW worker leaves cannot start another workflow."
         }
       ],
       isError: true
@@ -9364,6 +9578,7 @@ async function runWorkflowTool(args, signal, sandboxCwd) {
       ...workflowArgs !== void 0 ? { args: workflowArgs } : {},
       ...resumeFromRunId !== void 0 ? { resumeFromRunId } : {},
       ...routingPolicy !== void 0 ? { routingPolicy } : {},
+      ...isolation !== void 0 ? { isolation } : {},
       cwd,
       executors: EXECUTORS,
       ...DEFAULT_EXECUTOR !== void 0 ? { defaultExecutor: DEFAULT_EXECUTOR } : {},
@@ -9386,15 +9601,19 @@ async function runWorkflowTool(args, signal, sandboxCwd) {
     ok: result.ok,
     agentCount: result.agentCount,
     failedAgents: result.failedAgents,
+    failedWorkflows: result.failedWorkflows,
+    durable: result.durable,
+    journalErrors: result.journalErrors,
     tokensSpent: result.tokensSpent,
     durationMs: result.durationMs,
-    ...result.failedAgents > 0 ? { hint: `${result.failedAgents} agent(s) failed. Resume with resumeFromRunId: "${result.runId}".` } : {},
+    worktreeNotes: result.events.flatMap((event) => event.type === "log" && event.message.startsWith("[worktree]") ? [event.message] : []),
+    ...result.failedAgents > 0 ? { hint: routingPolicy !== void 0 ? `${result.failedAgents} agent(s) failed. Start a fresh policy-bound run; resume is forbidden.` : `${result.failedAgents} agent(s) failed. Resume with resumeFromRunId: "${result.runId}".` } : {},
     ...result.routingPolicy !== void 0 ? { routingPolicy: result.routingPolicy } : {},
     ...result.routingPolicyFingerprint !== void 0 ? { routingPolicyFingerprint: result.routingPolicyFingerprint } : {}
   };
   return {
     content: [{ type: "text", text: JSON.stringify(summary, null, 2) }],
-    isError: !result.ok
+    isError: !result.ok || routingPolicy !== void 0 && (result.failedAgents > 0 || result.failedWorkflows > 0)
   };
 }
 function handleRequest(msg) {
@@ -9430,7 +9649,8 @@ function handleRequest(msg) {
       ok(id, {
         protocolVersion: typeof params === "object" && params !== null && "protocolVersion" in params ? params.protocolVersion || "2024-11-05" : "2024-11-05",
         capabilities: { tools: {}, experimental: { [SANDBOX_META_KEY]: {} } },
-        serverInfo: SERVER_INFO
+        serverInfo: SERVER_INFO,
+        ...NATIVE_ADVICE ? { instructions: NATIVE_ADVICE } : {}
       });
       return;
     case "ping":
@@ -9530,6 +9750,6 @@ process.stdin.on("end", () => {
   if (buffer.length) handleRaw(buffer.toString("utf8"));
 });
 process.stderr.write(
-  `[odw] open-dynamic-workflows MCP server ready (executors: cursor,zcode,grok,claude,codex${DEFAULT_EXECUTOR ? `; default=${DEFAULT_EXECUTOR}` : ""})
+  `[odw] MCP server ready (workers: cursor,zcode,grok,antigravity,copilot; legacy explicit: claude,codex${DEFAULT_EXECUTOR ? `; host=${DEFAULT_EXECUTOR}` : ""}${NATIVE_ADVICE ? "; native-only guidance" : ""})
 `
 );

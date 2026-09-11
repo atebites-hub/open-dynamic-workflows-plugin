@@ -6,10 +6,10 @@
   "plugins": [
     {
       "name": "open-dynamic-workflows",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "source": {
         "source": "local",
-        "path": "./"
+        "path": "./native/codex/open-dynamic-workflows"
       },
       "policy": {
         "installation": "AVAILABLE",

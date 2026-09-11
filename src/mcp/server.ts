@@ -22,6 +22,8 @@
 //（ODW + ajv 内联——运行时无需 node_modules，与所有其它 zcode 插件一致）。
 
 import {
+  antigravityExecutor,
+  copilotExecutor,
   claudeExecutor,
   codexExecutor,
   cursorExecutor,
@@ -33,14 +35,16 @@ import type { RoutingPolicy, WorkflowResult } from "../../open-dynamic-workflows
 import { realpath } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
-import { defaultExecutorForHost } from "./host.js";
+import { defaultExecutorForHost, nativeOrchestrationAdvice } from "./host.js";
 
 const SERVER_INFO = {
   name: "open-dynamic-workflows",
-  version: "0.3.0",
+  version: "0.4.0",
 };
 
 const EXECUTORS = {
+  antigravity: antigravityExecutor,
+  copilot: copilotExecutor,
   cursor: cursorExecutor,
   zcode: zcodeExecutor,
   grok: grokExecutor,
@@ -49,7 +53,8 @@ const EXECUTORS = {
 };
 const SANDBOX_META_KEY = "codex/sandbox-state-meta";
 const DEFAULT_EXECUTOR = defaultExecutorForHost();
-const NESTED_LEAF = process.env.ODW_GROK_LEAF === "1" || process.env.ODW_CURSOR_LEAF === "1";
+const NATIVE_ADVICE = nativeOrchestrationAdvice(DEFAULT_EXECUTOR);
+const NESTED_LEAF = process.env.ODW_LEAF === "1" || process.env.ODW_GROK_LEAF === "1" || process.env.ODW_CURSOR_LEAF === "1";
 
 // The tool's `description` IS the authoring contract — the model reads it to learn how
 // to write a workflow script. Keep it aligned with skills/open-dynamic-workflows/SKILL.md.
@@ -58,7 +63,7 @@ const NESTED_LEAF = process.env.ODW_GROK_LEAF === "1" || process.env.ODW_CURSOR_
 const WORKFLOW_TOOL = {
   name: "workflow",
   description: [
-    "Execute a dynamic workflow script that orchestrates Cursor, Grok, Claude, Codex, or ZCode subagents deterministically.",
+    "Execute a dynamic workflow script across Cursor, Grok Build, ZCode, Antigravity, and Copilot workers.",
     "A dynamic workflow is plain JavaScript (NOT TypeScript) that orchestrates subagents at scale:",
     "the model writes the script, this tool runs it.",
     "",
@@ -74,8 +79,9 @@ const WORKFLOW_TOOL = {
     "- These globals are injected into scope: agent(prompt, {executor, ...}), parallel(thunks),",
     "  pipeline(items, ...stages), phase(title), log(message), args, workflow(ref, args?).",
     "- Named workers: {executor:'cursor'}, {executor:'zcode'}, {executor:'grok'}, {executor:'claude'}, {executor:'codex'}.",
+    "  New workers: {executor:'antigravity'}, {executor:'copilot'}. Claude/Codex adapters remain explicit compatibility workers, not active ODW hosts.",
     "  When executor is omitted, the host CLI is used: cursor on Cursor, grok on Grok Build,",
-    "  zcode on ZCode, codex on Codex, claude on Claude Code. Name another worker to override.",
+    "  zcode on ZCode, antigravity on Antigravity, copilot on Copilot. Claude hosts use ultracode; Codex/ChatGPT hosts use ultra mode instead.",
     "  An unknown name fails the run.",
     "- Codex model overrides default reasoningEffort to 'medium'; set reasoningEffort explicitly",
     "  only when the selected model supports the requested value.",
@@ -101,10 +107,12 @@ const WORKFLOW_TOOL = {
     "  ZERO token spend, the rest run live.",
     "",
     "RESULT: the tool returns whatever the script `return`ed (its `value`), plus run metadata.",
-    "isError is true when !ok; swallowed leaf failures keep ok=true but appear in failedAgents",
+    "isError is true when !ok; even swallowed leaf failures make ok=false and appear in failedAgents",
     "with a resume hint.",
     "",
     "Artifacts (script snapshot, journal, per-agent traces) land under .odw/<name>/runs/<runId>/.",
+    "Use isolation:'worktree' for parallel mutations. One committed base is shared per run; caller subdirectories are preserved.",
+    "Only successful pristine worktrees are removed. Commits, dirty/ignored files, failures, and cancellations retain the checkout; inspect worktreeNotes and agent traces.",
     "Consult the $open-dynamic-workflows skill for full authoring guidance and worked patterns.",
   ].join("\n"),
   inputSchema: {
@@ -129,6 +137,11 @@ const WORKFLOW_TOOL = {
         description:
           "Any JSON value passed into the script as the `args` global. Verbatim.",
       },
+      isolation: {
+        type: "string",
+        enum: ["worktree"],
+        description: "Isolate every worker in a named worktree and retain branch/diff receipts.",
+      },
       resumeFromRunId: {
         type: "string",
         description:
@@ -148,7 +161,7 @@ const WORKFLOW_TOOL = {
   },
 };
 
-const TOOLS = NESTED_LEAF ? [] : [WORKFLOW_TOOL];
+const TOOLS = NESTED_LEAF || NATIVE_ADVICE ? [] : [WORKFLOW_TOOL];
 const activeCalls = new Map<number | string, AbortController>();
 let responseFraming: "content-length" | "line" = "content-length";
 
@@ -194,10 +207,14 @@ async function runWorkflowTool(
     args?: unknown;
     resumeFromRunId?: unknown;
     routingPolicy?: unknown;
+    isolation?: unknown;
   },
   signal?: AbortSignal,
   sandboxCwd?: unknown,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError: boolean }> {
+  if (NATIVE_ADVICE) {
+    return { content: [{ type: "text", text: NATIVE_ADVICE }], isError: true };
+  }
   const {
     cwd: requestedCwd,
     script,
@@ -205,7 +222,12 @@ async function runWorkflowTool(
     args: workflowArgs,
     resumeFromRunId,
     routingPolicy,
+    isolation,
   } = args;
+
+  if (isolation !== undefined && isolation !== "worktree") {
+    return { content: [{ type: "text", text: "workflow isolation must be worktree when supplied." }], isError: true };
+  }
 
   if (!script && !scriptPath) {
     return {
@@ -224,7 +246,7 @@ async function runWorkflowTool(
       content: [
         {
           type: "text",
-          text: "Nested grok/cursor leaves cannot start another workflow.",
+          text: "ODW worker leaves cannot start another workflow.",
         },
       ],
       isError: true,
@@ -307,6 +329,7 @@ async function runWorkflowTool(
       ...(workflowArgs !== undefined ? { args: workflowArgs } : {}),
       ...(resumeFromRunId !== undefined ? { resumeFromRunId } : {}),
       ...(routingPolicy !== undefined ? { routingPolicy: routingPolicy as RoutingPolicy } : {}),
+      ...(isolation !== undefined ? { isolation } : {}),
       cwd,
       executors: EXECUTORS,
       ...(DEFAULT_EXECUTOR !== undefined ? { defaultExecutor: DEFAULT_EXECUTOR } : {}),
@@ -337,10 +360,16 @@ async function runWorkflowTool(
     ok: result.ok,
     agentCount: result.agentCount,
     failedAgents: result.failedAgents,
+    failedWorkflows: result.failedWorkflows,
+    durable: result.durable,
+    journalErrors: result.journalErrors,
     tokensSpent: result.tokensSpent,
     durationMs: result.durationMs,
+    worktreeNotes: result.events.flatMap((event) => event.type === "log" && event.message.startsWith("[worktree]") ? [event.message] : []),
     ...(result.failedAgents > 0
-      ? { hint: `${result.failedAgents} agent(s) failed. Resume with resumeFromRunId: "${result.runId}".` }
+      ? { hint: routingPolicy !== undefined
+          ? `${result.failedAgents} agent(s) failed. Start a fresh policy-bound run; resume is forbidden.`
+          : `${result.failedAgents} agent(s) failed. Resume with resumeFromRunId: "${result.runId}".` }
       : {}),
     ...(result.routingPolicy !== undefined ? { routingPolicy: result.routingPolicy } : {}),
     ...(result.routingPolicyFingerprint !== undefined
@@ -350,7 +379,8 @@ async function runWorkflowTool(
 
   return {
     content: [{ type: "text", text: JSON.stringify(summary, null, 2) }],
-    isError: !result.ok,
+    isError: !result.ok || (routingPolicy !== undefined &&
+      (result.failedAgents > 0 || result.failedWorkflows > 0)),
   };
 }
 
@@ -406,6 +436,7 @@ function handleRequest(msg: unknown): void {
             : "2024-11-05",
         capabilities: { tools: {}, experimental: { [SANDBOX_META_KEY]: {} } },
         serverInfo: SERVER_INFO,
+        ...(NATIVE_ADVICE ? { instructions: NATIVE_ADVICE } : {}),
       });
       return;
     case "ping":
@@ -525,5 +556,5 @@ process.stdin.on("end", () => {
 });
 
 process.stderr.write(
-  `[odw] open-dynamic-workflows MCP server ready (executors: cursor,zcode,grok,claude,codex${DEFAULT_EXECUTOR ? `; default=${DEFAULT_EXECUTOR}` : ""})\n`,
+  `[odw] MCP server ready (workers: cursor,zcode,grok,antigravity,copilot; legacy explicit: claude,codex${DEFAULT_EXECUTOR ? `; host=${DEFAULT_EXECUTOR}` : ""}${NATIVE_ADVICE ? "; native-only guidance" : ""})\n`,
 );

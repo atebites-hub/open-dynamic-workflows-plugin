@@ -7,7 +7,7 @@
         "${ZCODE_PLUGIN_ROOT}/dist/mcp/server.js"
       ],
       "enabled": true,
-      "timeoutMs": 30000,
+      "timeoutMs": 28800000,
       "env": {
         "ODW_HOST": "zcode"
       }

@@ -199,19 +199,20 @@ function assertGeneratedTreeEqual(source, target, relative = "") {
 }
 
 const codexManifest = JSON.parse(
-  readFileSync(resolve(root, ".codex-plugin", "plugin.json"), "utf8"),
+  readFileSync(resolve(root, "native/codex/open-dynamic-workflows/.codex-plugin/plugin.json"), "utf8"),
 );
 const codexMcp = JSON.parse(readFileSync(resolve(root, ".codex-mcp.json"), "utf8"));
 const codexMarketplace = JSON.parse(
   readFileSync(resolve(root, ".agents", "plugins", "marketplace.json"), "utf8"),
 );
 
-expect("Codex manifest registers the skill and MCP server", () => {
+expect("Codex manifest is native-ultra advice only", () => {
   assert.equal(codexManifest.name, "open-dynamic-workflows");
   assert.equal(codexManifest.skills, "./skills/");
-  assert.equal(codexManifest.mcpServers, "./.codex-mcp.json");
+  assert.equal(existsSync(resolve(root, "native/codex/open-dynamic-workflows/.mcp.json")), false);
+  assert.equal(codexManifest.mcpServers, undefined);
 });
-expect("all host manifests and marketplace entries use release 0.3.0", () => {
+expect("all host manifests and marketplace entries use release 0.4.0", () => {
   for (const relative of [
     ".codex-plugin/plugin.json",
     ".cursor-plugin/plugin.json",
@@ -220,14 +221,14 @@ expect("all host manifests and marketplace entries use release 0.3.0", () => {
     ".zcode-plugin/plugin.json",
     "plugin.json",
   ]) {
-    assert.equal(JSON.parse(readFileSync(resolve(root, relative), "utf8")).version, "0.3.0", relative);
+    assert.equal(JSON.parse(readFileSync(resolve(root, relative), "utf8")).version, "0.4.0", relative);
   }
   for (const relative of [
     "marketplace.json",
     ".agents/plugins/marketplace.json",
     ".grok-plugin/marketplace.json",
   ]) {
-    assert.equal(JSON.parse(readFileSync(resolve(root, relative), "utf8")).plugins[0].version, "0.3.0", relative);
+    assert.equal(JSON.parse(readFileSync(resolve(root, relative), "utf8")).plugins[0].version, "0.4.0", relative);
   }
 });
 expect("Codex MCP command is plugin-relative", () => {
@@ -242,7 +243,7 @@ expect("Codex MCP command is plugin-relative", () => {
 expect("Codex marketplace exposes this repository as the plugin", () => {
   const plugin = codexMarketplace.plugins[0];
   assert.equal(plugin.name, "open-dynamic-workflows");
-  assert.deepEqual(plugin.source, { source: "local", path: "./" });
+  assert.deepEqual(plugin.source, { source: "local", path: "./native/codex/open-dynamic-workflows" });
 });
 
 const grokMarketplace = JSON.parse(
@@ -256,7 +257,7 @@ const grokMcp = JSON.parse(
 );
 const rootMcp = JSON.parse(readFileSync(resolve(root, ".mcp.json"), "utf8"));
 const claudePlugin = JSON.parse(
-  readFileSync(resolve(root, ".claude-plugin", "plugin.json"), "utf8"),
+  readFileSync(resolve(root, "native/claude/open-dynamic-workflows/.claude-plugin/plugin.json"), "utf8"),
 );
 
 expect("Grok marketplace names this plugin with a local source", () => {
@@ -308,11 +309,10 @@ expect("root ZCode MCP launch still uses ZCODE_PLUGIN_ROOT", () => {
   assert.ok(server.args.some((a) => String(a).includes("${ZCODE_PLUGIN_ROOT}")));
   assert.equal(server.env.ODW_HOST, "zcode");
 });
-expect("Claude manifest carries its inline host-native MCP server", () => {
-  const server = claudePlugin.mcpServers["open-dynamic-workflows"];
-  assert.equal(server.command, "node");
-  assert.deepEqual(server.args, ["${CLAUDE_PLUGIN_ROOT}/dist/mcp/server.js"]);
-  assert.equal(server.env.ODW_HOST, "claude");
+expect("Claude manifest is native-ultracode advice only", () => {
+  assert.equal(claudePlugin.mcpServers, undefined);
+  assert.equal(claudePlugin.skills, "./skills/");
+  assert.equal(existsSync(resolve(root, "native/claude/open-dynamic-workflows/.mcp.json")), false);
 });
 expect("authoring skill and /workflows command are present", () => {
   assert.ok(existsSync(resolve(root, "skills", "open-dynamic-workflows", "SKILL.md")));
@@ -428,6 +428,10 @@ const proc = spawn(process.execPath, [serverPath], {
   cwd: scratch,
   env: {
     ...process.env,
+    ODW_HOST: "cursor",
+    CURSOR_BIN: fakeCursor,
+    GROK_BIN: fakeGrok,
+    ZCODE_BIN: fakeZcode,
     ODW_REQUIRE_CWD: "1",
     PATH: `${fakeBin}${delimiter}${process.env.PATH ?? ""}`,
     ZCODE_PROJECT_DIR: scratch,
@@ -494,8 +498,10 @@ try {
     assert.match(d, /cursor on Cursor/);
     assert.match(d, /grok on Grok Build/);
     assert.match(d, /zcode on ZCode/);
-    assert.match(d, /codex on Codex/);
-    assert.match(d, /claude on Claude Code/);
+    assert.match(d, /ultra mode/);
+    assert.match(d, /ultracode/);
+    assert.ok(d.includes("executor:'antigravity'"));
+    assert.ok(d.includes("executor:'copilot'"));
   });
   expect("workflow tool advertises the exact immutable routingPolicy schema", () => {
     assert.deepEqual(list.result.tools[0].inputSchema.properties.routingPolicy, {
@@ -721,7 +727,7 @@ try {
     assert.equal(parsed.failedAgents, 0);
   });
 
-  console.log("\n[smoke] Codex host omitted-executor uses codex");
+  console.log("\n[smoke] Cursor host omitted-executor uses cursor");
   framedWrite(proc, {
     jsonrpc: "2.0",
     id: 14,
@@ -738,10 +744,10 @@ try {
     },
   });
   const missingExec = await waitForMessage((m) => m.id === 14, 30000);
-  expect("Codex host omitted-executor uses codex", () => {
+  expect("Cursor host omitted-executor uses cursor", () => {
     const parsed = JSON.parse(missingExec.result.content[0].text);
     assert.equal(missingExec.result.isError, false);
-    assert.equal(parsed.value, "ODW_FAKE_CODEX_OK");
+    assert.equal(parsed.value, "ODW_FAKE_CURSOR_OK");
   });
 
   console.log("\n[smoke] tools/call workflow (missing script + scriptPath → isError)");
@@ -1084,7 +1090,7 @@ async function assertHostDefault(label, extraEnv, expectedText) {
 
 await assertHostDefault("cursor", { ODW_HOST: "cursor", CURSOR_PLUGIN_ROOT: root }, "ODW_FAKE_CURSOR_OK");
 await assertHostDefault("zcode", { ODW_HOST: "zcode", ZCODE_PLUGIN_ROOT: root }, "ODW_FAKE_ZCODE_OK");
-await assertHostDefault("claude", { ODW_HOST: "claude", CLAUDE_PLUGIN_ROOT: root }, "ODW_FAKE_CLAUDE_OK");
+// Claude/Codex native-only refusal is exercised in src/mcp/host.test.ts.
 
 console.log(`\n[smoke] ${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

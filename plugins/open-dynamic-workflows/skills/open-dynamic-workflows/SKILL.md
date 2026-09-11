@@ -17,6 +17,32 @@ out to a subagent. The control flow (loops, branching, fan-out) lives in determi
 JS — the LLM work happens only at the leaves. Intermediate results stay in script
 variables, so only the final answer comes back.
 
+## Harness policy (2026-09-09)
+
+Claude harnesses use native **ultracode**; Codex/ChatGPT harnesses use native
+**ultra** mode. Recommend that mode without changing the chosen model. Do not
+activate or call ODW from either host. This supersedes older alignment advice.
+
+ODW is used by Cursor, Grok Build, ZCode, Antigravity and Copilot. Other harnesses
+are integration gaps until an adapter and live evidence exist, not additional
+policy exclusions. Legacy explicit Claude/Codex worker adapters remain available
+to standalone SDK callers; they do not enable ODW in those host applications.
+
+## Worktree safety
+
+Use `isolation: 'worktree'` for workers that mutate files concurrently, not for
+every read-only task. The first isolated worker pins the caller HEAD for the whole
+run, including nested workflows. Staged/unstaged caller edits are not copied or
+discarded; commit required shared inputs before an isolated run. A caller inside
+a repository subdirectory stays in that subdirectory inside each worker checkout.
+
+Only successful pristine worktrees at their original commit are removed, without
+force. New commits, changed/untracked/ignored files, failed or cancelled workers,
+and uncertain cleanup retain the checkout. Use `worktreeNotes` and the agent
+trace `cwd` to inspect and integrate the result; no changes are auto-merged into
+the caller. Retained commits remain reachable through their worktree. Worktrees
+are Git isolation, not a security sandbox: native permission checks remain in force.
+
 ## When to use a workflow (vs subagents / skills / plain tools)
 
 A workflow **moves the plan into code**. Reach for one when:
@@ -72,7 +98,7 @@ These are injected into the script scope:
   override defaults to `medium`), `isolation:'worktree'` (fresh git worktree —
   EXPENSIVE, only when agents mutate files in parallel), `agentType` (named subagent preset).
   When `executor` is omitted, the **host CLI** is used: cursor in Cursor, grok in Grok Build,
-  zcode in ZCode, codex in Codex, claude in Claude Code. Name another worker to mix CLIs.
+  zcode in ZCode, antigravity in Antigravity, copilot in Copilot. Claude/Codex hosts do not activate ODW.
 - **`pipeline(items, stage1, stage2, …) → Promise<any[]>`** — run each item through all
   stages independently, **NO barrier between stages** (item A can be in stage 3 while item B
   is in stage 1). Each stage callback gets `(prevResult, originalItem, index)`. A throwing
@@ -98,7 +124,7 @@ different one review, when you want the verifier to be a different model from th
 // Prefer zcode. Name another CLI only when you want a different worker.
 const draft = await agent('Draft a fix for this failing test.', { executor: 'zcode', label: 'draft' })
 const review = await agent(`Independently review this fix — is it correct?\n\n${draft}`, {
-  executor: 'codex', label: 'review', schema: VERDICT_SCHEMA,
+  executor: 'cursor', label: 'review', schema: VERDICT_SCHEMA,
 })
 return { draft, review }
 ```
@@ -106,7 +132,7 @@ return { draft, review }
 ### 3. Rules that the runtime enforces (fail fast)
 
 - **Plain JS only**: no `import`, `require`, `fs`, or Node APIs in the script.
-- **Omitted `executor` uses the host CLI**: cursor / grok / zcode / codex / claude
+- **Omitted `executor` uses the host CLI**: cursor / grok / zcode / antigravity / copilot
   depending on where the plugin is loaded. An unknown name fails the run with a clear error.
 - **Determinism**: `Date.now()`, `Math.random()`, and argless `new Date()` are unavailable
   (they would break resume). Pass timestamps via `args`; vary by index instead of random.
@@ -237,7 +263,7 @@ For a governed run, pass exactly one raw `routingPolicy` object to `workflow`:
 ```js
 workflow({
   cwd: '/absolute/project/path',
-  routingPolicy: { executor: 'codex', model: 'gpt-5.4', reasoningEffort: 'high' },
+  routingPolicy: { executor: 'cursor', model: 'gpt-5.4', reasoningEffort: 'high' },
   script,
 })
 ```
