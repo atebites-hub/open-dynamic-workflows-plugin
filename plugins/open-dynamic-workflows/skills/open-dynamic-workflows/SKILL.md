@@ -17,16 +17,18 @@ out to a subagent. The control flow (loops, branching, fan-out) lives in determi
 JS — the LLM work happens only at the leaves. Intermediate results stay in script
 variables, so only the final answer comes back.
 
-## Harness policy (2026-09-09)
+## Harness policy (2026-09-11)
 
 Claude harnesses use native **ultracode**; Codex/ChatGPT harnesses use native
-**ultra** mode. Recommend that mode without changing the chosen model. Do not
-activate or call ODW from either host. This supersedes older alignment advice.
+**ultra** mode. Advise the mode without changing the selected model; do not
+activate ODW on those hosts.
 
-ODW is used by Cursor, Grok Build, ZCode, Antigravity and Copilot. Other harnesses
-are integration gaps until an adapter and live evidence exist, not additional
-policy exclusions. Legacy explicit Claude/Codex worker adapters remain available
-to standalone SDK callers; they do not enable ODW in those host applications.
+Cursor and Grok Bot use **ODW with Cursor CLI workers**, not Cursor multitask
+or persistent Bot-to-Bot delegation. Set `ODW_HOST=grok-bot` explicitly in the
+Bot VM; omitted executor then selects `cursor`, not Grok Build. Grok Build,
+ZCode, Antigravity and Copilot retain their corresponding ODW executors.
+Installation and live-run gaps remain explicit. Legacy Claude/Codex executors
+remain available to standalone SDK callers, not their native-only host packages.
 
 ## Worktree safety
 
@@ -323,13 +325,18 @@ const result = await runWorkflow({
   `<runDir>/agents/agent-N.jsonl`. Set `ODW_DEBUG=1` to also stream each spawn's argv, exit
   status, and a stderr tail live to stderr.
 
-> In Claude Code itself, the equivalent is the built-in `Workflow` tool (the model writes a
-> script and calls it; ultracode auto-decides; runs in the background under `/workflows`).
-> This skill targets running the SAME contract on this standalone runtime, so a script you
-> write here is portable to either.
->
-> Native-first prefers Claude ultracode, Codex/ChatGPT ultra, or Cursor multitask when they
-> fit. That is not “skip ODW” on those hosts. Detect the native mode and do not fight it;
-> seat or compose beside it, or defer explicitly. Cross-executor / multi-harness
-> orchestration is an ODW gap to fill. Alignment is required by policy and proven only
-> after live QA — do not soft-pass.
+## Cursor and Grok Bot execution
+
+Use ODW's `cursor` executor on both hosts. Grok Bot launches must explicitly
+set `ODW_HOST=grok-bot` and pass an absolute `cwd` inside the Bot VM. This is
+not a persistent-Bot messaging bridge and does not use Cursor multitask.
+Verify `cursor-agent` installation, authentication, chosen model and usage pool
+there; never substitute Grok Build or a worker on another machine. A Bot login
+is not Cursor CLI authentication. Configure its CLI MCP entry with
+`node scripts/install-cursor-cli.mjs --host grok-bot`; native Bot MCP loading
+must be independently verified.
+
+For parallel mutations, request `isolation: 'worktree'`, then inspect retained
+worktree and branch/diff receipts before accepting results. `executionContext`
+reports configured host/default executor, not runtime or model attestation.
+Claude and Codex host applications retain their native-only policy above.

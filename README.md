@@ -2,23 +2,25 @@
 
 [中文文档](./README_CN.md)
 
-Dynamic workflow orchestration for **Cursor, Grok Build, ZCode, Antigravity, and Copilot** — fan a deterministic
+Dynamic workflow orchestration for **Cursor, Grok Bot (via Cursor CLI), Grok Build, ZCode, Antigravity, and Copilot** — fan a deterministic
 JavaScript script out across many CLI subagents through a native `workflow` tool and authoring skill.
 
 A dynamic workflow is a **plain-JS script that orchestrates subagents at scale**. The model
 writes the script for the task; the plugin's bundled runtime executes it, fanning each
 `agent()` call out to a real `cursor-agent`, `grok`, `claude`, `codex`, or `zcode` subprocess.
 
-## Harness policy (2026-09-09)
+## Harness policy (2026-09-11)
 
 Claude harnesses use native **ultracode**; Codex/ChatGPT harnesses use native
-**ultra** mode. Recommend that mode without changing the chosen model. Do not
-activate or call ODW from either host. This supersedes older alignment advice.
+**ultra** mode. Advise the mode without changing the selected model; do not
+activate ODW on those hosts.
 
-ODW is used by Cursor, Grok Build, ZCode, Antigravity and Copilot. Other harnesses
-are integration gaps until an adapter and live evidence exist, not additional
-policy exclusions. Legacy explicit Claude/Codex worker adapters remain available
-to standalone SDK callers; they do not enable ODW in those host applications.
+Cursor and Grok Bot use **ODW with Cursor CLI workers**, not Cursor multitask
+or persistent Bot-to-Bot delegation. Set `ODW_HOST=grok-bot` explicitly in the
+Bot VM; omitted executor then selects `cursor`, not Grok Build. Grok Build,
+ZCode, Antigravity and Copilot retain their corresponding ODW executors.
+Installation and live-run gaps remain explicit. Legacy Claude/Codex executors
+remain available to standalone SDK callers, not their native-only host packages.
 
 ## Worktree safety
 
@@ -259,31 +261,22 @@ Without `routingPolicy`, existing host defaults remain unchanged: omitted execut
 Cursor, Grok, Claude, Codex, or ZCode from the host launch environment. An explicit executor
 still overrides that host default.
 
-## Notes / scope (v0.3)
+## Notes / scope (v0.4.1)
 
-- **Host-native default worker.** Omitted `executor` uses cursor on Cursor, grok on Grok Build,
+- **Host-native default worker.** Omitted `executor` uses cursor on Cursor and Grok Bot, grok on Grok Build,
   zcode on ZCode, codex on Codex, claude on Claude Code. Name another worker to override.
 - **Synchronous tool.** `workflow()` runs to completion and returns (v1). Background execution
   with task notifications is a v2 enhancement.
 - **Local evidence.** `.odw/` artifacts contain workflow scripts, prompts, and agent responses;
   newly written run files are owner-only. Keep `.odw/` gitignored.
 - **No ultracode auto-decide.** ODW does not auto-inject a workflow the way Claude ultracode
-  can. The skill and tool descriptions stay passive; the model decides. That is not a license
-  to skip ODW on Claude, Codex, or Cursor — see [Native alignment required](#native-alignment-required).
+  can. The skill and tool descriptions stay passive; the model decides. Claude/Codex host exclusions and the Cursor/Grok Bot ODW route
+  are defined by the harness policy above.
 - **Telemetry.** The `zcode_result` envelope currently reports `costUsd`/`inputTokens`/
   `outputTokens` as null (`telemetryAvailable: false`). The plugin reports zeros honestly
   until the zcode launcher fills these in.
 
-## Harness policy (2026-09-09)
-
-Claude harnesses use native **ultracode**; Codex/ChatGPT harnesses use native
-**ultra** mode. Recommend that mode without changing the chosen model. Do not
-activate or call ODW from either host. This supersedes older alignment advice.
-
-ODW is used by Cursor, Grok Build, ZCode, Antigravity and Copilot. Other harnesses
-are integration gaps until an adapter and live evidence exist, not additional
-policy exclusions. Legacy explicit Claude/Codex worker adapters remain available
-to standalone SDK callers; they do not enable ODW in those host applications.
+See [harness policy](#harness-policy-2026-09-11) above.
 
 License: MIT.
 
@@ -297,3 +290,38 @@ The published advice-only roots contain one native-orchestration skill and no
 MCP configuration. Claude external catalogs use the documented `git-subdir`
 source with the reviewed release SHA; Codex's own catalog points at its native
 package directory. Other hosts retain the full workflow package.
+
+## Grok Bot through Cursor CLI
+
+This is a configured host-to-executor mapping, not native Bot orchestration.
+The worker CLI runs **inside the Bot VM**. Do not use a Mac-side fallback or
+substitute the ambiguous `agent` binary, which may belong to Grok Build.
+
+Before installation, check `cursor-agent --version` and `cursor-agent status`
+in that VM. Keep credentials out of prompts and logs. A Grok Bot login does not
+prove Cursor CLI authentication, model availability, or which allowance pays
+for its requests. No model selection or billing setting is changed by this plugin.
+
+For the Cursor CLI MCP configuration in the Bot VM:
+
+```sh
+node scripts/install-cursor-cli.mjs --host grok-bot
+cursor-agent mcp enable open-dynamic-workflows
+```
+
+This installer configures Cursor CLI; it does not install/authenticate that CLI
+or certify that the Grok Bot host loads its local MCP configuration. Register
+`node /absolute/plugin/dist/mcp/server.js` with `ODW_HOST=grok-bot` through the
+host's supported MCP mechanism. If that mechanism is unavailable, report an
+installation gap rather than calling an alternate host a Grok Bot pass.
+
+Every Grok Bot workflow call must supply its absolute VM project `cwd`.
+Use `isolation: 'worktree'` for parallel writers. Inspect the returned
+`executionContext` (configured host/default executor only), per-agent traces
+(actual executor), and retained branch/diff receipts. Never infer preserved
+files from a resumed chat ID, or runtime/model attestation from a host label.
+
+`npm run verify` exercises the Grok Bot mapping, missing/relative cwd rejection,
+installer idempotence, and two retained writer worktrees through the packaged
+server. The model CLIs in those tests are fixtures; live VM qualification is
+still a separate requirement.

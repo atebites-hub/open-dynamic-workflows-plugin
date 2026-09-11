@@ -1,7 +1,7 @@
 {
   "name": "open-dynamic-workflows",
-  "version": "0.4.0",
-  "description": "ODW for Cursor, Grok Build, ZCode, Antigravity and Copilot, with safe worktree isolation. Claude and Codex hosts use native ultracode/ultra instead.",
+  "version": "0.4.1",
+  "description": "ODW for Cursor, Grok Bot (via Cursor CLI), Grok Build, ZCode, Antigravity and Copilot, with safe worktree isolation. Claude and Codex hosts use native ultracode/ultra instead.",
   "author": {
     "name": "Open Dynamic Workflows",
     "url": "https://github.com/atebites-hub/open-dynamic-workflows-plugin"

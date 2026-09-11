@@ -9331,8 +9331,8 @@ import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/mcp/host.ts
-var NAMED_HOSTS = /* @__PURE__ */ new Set(["cursor", "grok", "zcode", "codex", "claude", "antigravity", "copilot"]);
-function defaultExecutorForHost(env = process.env) {
+var NAMED_HOSTS = /* @__PURE__ */ new Set(["cursor", "grok", "grok-bot", "zcode", "codex", "claude", "antigravity", "copilot"]);
+function detectHost(env = process.env) {
   const named = env.ODW_HOST?.trim();
   if (named) return NAMED_HOSTS.has(named) ? named : void 0;
   if (env.ODW_REQUIRE_CWD === "1") return "codex";
@@ -9341,6 +9341,10 @@ function defaultExecutorForHost(env = process.env) {
   if (env.ZCODE_PLUGIN_ROOT?.trim()) return "zcode";
   if (env.CLAUDE_PLUGIN_ROOT?.trim()) return "claude";
   return void 0;
+}
+function defaultExecutorForHost(env = process.env) {
+  const host = detectHost(env);
+  return host === "grok-bot" ? "cursor" : host;
 }
 function nativeOrchestrationAdvice(host) {
   if (host === "claude") return "Claude harnesses use native ultracode. Enable ultracode in the host; ODW is not activated here. Keep the user's chosen model.";
@@ -9351,7 +9355,7 @@ function nativeOrchestrationAdvice(host) {
 // src/mcp/server.ts
 var SERVER_INFO = {
   name: "open-dynamic-workflows",
-  version: "0.4.0"
+  version: "0.4.1"
 };
 var EXECUTORS = {
   antigravity: antigravityExecutor,
@@ -9363,8 +9367,9 @@ var EXECUTORS = {
   codex: codexExecutor
 };
 var SANDBOX_META_KEY = "codex/sandbox-state-meta";
+var HOST = detectHost();
 var DEFAULT_EXECUTOR = defaultExecutorForHost();
-var NATIVE_ADVICE = nativeOrchestrationAdvice(DEFAULT_EXECUTOR);
+var NATIVE_ADVICE = nativeOrchestrationAdvice(HOST);
 var NESTED_LEAF = process.env.ODW_LEAF === "1" || process.env.ODW_GROK_LEAF === "1" || process.env.ODW_CURSOR_LEAF === "1";
 var WORKFLOW_TOOL = {
   name: "workflow",
@@ -9386,9 +9391,12 @@ var WORKFLOW_TOOL = {
     "  pipeline(items, ...stages), phase(title), log(message), args, workflow(ref, args?).",
     "- Named workers: {executor:'cursor'}, {executor:'zcode'}, {executor:'grok'}, {executor:'claude'}, {executor:'codex'}.",
     "  New workers: {executor:'antigravity'}, {executor:'copilot'}. Claude/Codex adapters remain explicit compatibility workers, not active ODW hosts.",
-    "  When executor is omitted, the host CLI is used: cursor on Cursor, grok on Grok Build,",
+    "  When executor is omitted: cursor on Cursor and Grok Bot, grok on Grok Build,",
     "  zcode on ZCode, antigravity on Antigravity, copilot on Copilot. Claude hosts use ultracode; Codex/ChatGPT hosts use ultra mode instead.",
     "  An unknown name fails the run.",
+    "- Grok Bot must set ODW_HOST=grok-bot and pass its VM project cwd explicitly. Its workers",
+    "  are Cursor CLI processes, not persistent Bots, Cursor multitask, or Grok Build. CLI auth,",
+    "  model availability and usage allowance must be verified in that VM, not inferred from Bot login.",
     "- Codex model overrides default reasoningEffort to 'medium'; set reasoningEffort explicitly",
     "  only when the selected model supports the requested value.",
     "- routingPolicy is an immutable exact {executor, model, reasoningEffort} route for the run.",
@@ -9427,7 +9435,7 @@ var WORKFLOW_TOOL = {
       cwd: {
         type: "string",
         minLength: 1,
-        description: "Absolute project directory used for workflow artifacts and subagents. Required from Codex callers. Grok and ZCode may omit it (host project dir is used)."
+        description: "Absolute project directory used for workflow artifacts and subagents. Required from Grok Bot and Codex callers. Grok Build and ZCode may omit it (host project dir is used)."
       },
       script: {
         type: "string",
@@ -9521,6 +9529,12 @@ async function runWorkflowTool(args, signal, sandboxCwd) {
       isError: true
     };
   }
+  if (HOST === "grok-bot" && requestedCwd === void 0) {
+    return {
+      content: [{ type: "text", text: "Grok Bot workflow calls require an absolute `cwd` inside the Bot VM." }],
+      isError: true
+    };
+  }
   if (process.env.ODW_REQUIRE_CWD === "1" && requestedCwd === void 0) {
     return {
       content: [{ type: "text", text: "Codex workflow calls require an absolute `cwd`." }],
@@ -9596,6 +9610,8 @@ async function runWorkflowTool(args, signal, sandboxCwd) {
     };
   }
   const summary = {
+    // Configured launch context, not authoritative runtime/model attestation.
+    executionContext: { host: HOST ?? null, defaultExecutor: DEFAULT_EXECUTOR ?? null },
     value: result.value ?? null,
     runId: result.runId,
     ok: result.ok,
@@ -9750,6 +9766,6 @@ process.stdin.on("end", () => {
   if (buffer.length) handleRaw(buffer.toString("utf8"));
 });
 process.stderr.write(
-  `[odw] MCP server ready (workers: cursor,zcode,grok,antigravity,copilot; legacy explicit: claude,codex${DEFAULT_EXECUTOR ? `; host=${DEFAULT_EXECUTOR}` : ""}${NATIVE_ADVICE ? "; native-only guidance" : ""})
+  `[odw] MCP server ready (workers: cursor,zcode,grok,antigravity,copilot; legacy explicit: claude,codex${HOST ? `; host=${HOST}` : ""}${DEFAULT_EXECUTOR ? `; default-executor=${DEFAULT_EXECUTOR}` : ""}${NATIVE_ADVICE ? "; native-only guidance" : ""})
 `
 );

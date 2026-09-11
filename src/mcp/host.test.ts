@@ -5,7 +5,17 @@ import { delimiter, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
 
-import { defaultExecutorForHost, isGrokHost, nativeOrchestrationAdvice } from "./host.ts";
+import { defaultExecutorForHost, detectHost, isGrokHost, nativeOrchestrationAdvice } from "./host.ts";
+
+test("Grok Bot preserves host identity but defaults to Cursor, not Grok Build", () => {
+  const env = { ODW_HOST: "grok-bot", GROK_PLUGIN_ROOT: "/g", ODW_REQUIRE_CWD: "1" };
+  assert.equal(detectHost(env), "grok-bot");
+  assert.equal(defaultExecutorForHost(env), "cursor");
+  assert.equal(isGrokHost(env), false);
+  assert.equal(nativeOrchestrationAdvice("grok-bot"), undefined);
+  assert.equal(nativeOrchestrationAdvice("cursor"), undefined);
+  assert.equal(detectHost({ ODW_HOST: "unknown", PLUGIN_ROOT: "/p" }), undefined);
+});
 
 test("ODW_HOST wins over other signals", () => {
   assert.equal(
@@ -144,6 +154,7 @@ finish();
   const hosts = [
     ["codex", "codex"],
     ["cursor", "cursor"],
+    ["grok-bot", "cursor"],
     ["claude", "claude"],
     ["grok", "grok"],
     ["zcode", "zcode"],
@@ -169,7 +180,7 @@ finish();
           ODW_FAKE_KIND: kind,
           ODW_FAKE_LAUNCH_LOG: launchLog,
           PATH: `${directory}${delimiter}${process.env.PATH ?? ""}`,
-          ...(host === "cursor" ? { CURSOR_BIN: fake } : {}),
+          ...(kind === "cursor" ? { CURSOR_BIN: fake } : {}),
           ...(host === "grok" ? { GROK_BIN: fake } : {}),
           ...(host === "zcode" ? { ZCODE_BIN: fake } : {}),
           ...(host === "antigravity" ? { ANTIGRAVITY_BIN: fake } : {}),
@@ -204,6 +215,17 @@ finish();
       const listed = await request(2, "tools/list");
       const nativeOnly = host === "claude" || host === "codex";
       assert.equal(listed.result.tools.length, nativeOnly ? 0 : 1, `${host} advertised the wrong tools`);
+      if (host === "grok-bot") {
+        for (const [id, cwd] of [[4, undefined], [5, "relative/path"]] as const) {
+          const rejected = await request(id, "tools/call", {
+            name: "workflow",
+            arguments: { ...(cwd === undefined ? {} : { cwd }), script: "export const meta={name:'bad-bot-cwd',description:'no launch'}; return await agent('no');" },
+          });
+          assert.equal(rejected.result.isError, true);
+          assert.match(rejected.result.content[0].text, /absolute/);
+          assert.equal(await launchCount(), launchesBefore, "invalid Bot cwd launched a worker");
+        }
+      }
       const call = await request(3, "tools/call", {
         name: "workflow",
         ...(host === "codex" ? { _meta: { "codex/sandbox-state-meta": { sandboxCwd: `file://${directory}` } } } : {}),
@@ -221,7 +243,9 @@ finish();
         assert.equal(await launchCount(), launchesBefore, "invalid host launched a subprocess");
       } else {
         assert.equal(call.result.isError, false, `${host} startup call failed`);
-        assert.equal(JSON.parse(call.result.content[0].text).value, "HOST_OK", `${host} selected the wrong executor`);
+        const summary = JSON.parse(call.result.content[0].text);
+        assert.equal(summary.value, "HOST_OK", `${host} selected the wrong executor`);
+        assert.deepEqual(summary.executionContext, { host, defaultExecutor: kind });
         assert.equal(await launchCount(), launchesBefore + 1, `${host} did not launch its native executor`);
       }
       child.kill();

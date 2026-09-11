@@ -36,6 +36,7 @@ function fail(message) {
 function parseArgs(argv) {
   let home = homedir();
   let pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  let host = "cursor";
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--home") {
@@ -44,6 +45,9 @@ function parseArgs(argv) {
     } else if (arg === "--plugin-root") {
       pluginRoot = argv[++i];
       if (!pluginRoot) fail("--plugin-root requires a directory");
+    } else if (arg === "--host") {
+      host = argv[++i];
+      if (host !== "cursor" && host !== "grok-bot") fail("--host must be cursor or grok-bot");
     } else if (arg === "-h" || arg === "--help") {
       printHelp();
       process.exit(0);
@@ -51,11 +55,11 @@ function parseArgs(argv) {
       fail(`unknown argument: ${arg}`);
     }
   }
-  return { home: resolve(home), pluginRoot: resolve(pluginRoot) };
+  return { home: resolve(home), pluginRoot: resolve(pluginRoot), host };
 }
 
 function printHelp() {
-  console.log(`Usage: node scripts/install-cursor-cli.mjs [--home DIR] [--plugin-root DIR]
+  console.log(`Usage: node scripts/install-cursor-cli.mjs [--home DIR] [--plugin-root DIR] [--host cursor|grok-bot]
 
 Install Open Dynamic Workflows for Cursor CLI (\`agent\`) without Customize:
   ~/.cursor/mcp.json                         absolute MCP command (ODW_HOST=cursor)
@@ -64,6 +68,11 @@ Install Open Dynamic Workflows for Cursor CLI (\`agent\`) without Customize:
 
 Then:  agent mcp enable ${PLUGIN_NAME}
 Dev:   agent --plugin-dir <plugin-root> --approve-mcps
+
+For a Grok Bot VM, use --host grok-bot. This configures its Cursor CLI MCP entry;
+it does not install/authenticate Cursor CLI or prove native Bot plugin loading.
+Grok Bot must pass an absolute workflow cwd in that VM. Verify its CLI model and
+usage allowance separately; do not substitute Grok Build or a Mac-side worker.
 `);
 }
 
@@ -132,7 +141,7 @@ function installLocalPlugin(pluginRoot, dest) {
   }
 }
 
-function mergeMcpConfig(mcpPath, serverPath) {
+function mergeMcpConfig(mcpPath, serverPath, host) {
   mkdirSync(dirname(mcpPath), { recursive: true });
   let doc = { mcpServers: {} };
   if (pathExists(mcpPath)) {
@@ -155,7 +164,7 @@ function mergeMcpConfig(mcpPath, serverPath) {
     command: "node",
     args: [serverPath],
     env: {
-      ODW_HOST: "cursor",
+      ODW_HOST: host,
     },
   };
   const text = `${JSON.stringify(doc, null, 2)}\n`;
@@ -177,24 +186,26 @@ function installSkill(pluginRoot, dest) {
 }
 
 function main() {
-  const { home, pluginRoot } = parseArgs(process.argv.slice(2));
+  const { home, pluginRoot, host } = parseArgs(process.argv.slice(2));
   const serverPath = requirePlugin(pluginRoot);
   const localPlugin = join(home, ".cursor", "plugins", "local", PLUGIN_NAME);
   const skillDest = join(home, ".cursor", "skills", PLUGIN_NAME);
   const mcpPath = join(home, ".cursor", "mcp.json");
   const localMode = installLocalPlugin(pluginRoot, localPlugin);
   installSkill(pluginRoot, skillDest);
-  mergeMcpConfig(mcpPath, serverPath);
+  mergeMcpConfig(mcpPath, serverPath, host);
 
-  console.log(`Installed ${PLUGIN_NAME} for Cursor CLI.
+  console.log(`Installed ${PLUGIN_NAME} for Cursor CLI (host=${host}).
 
   MCP:    ${mcpPath}
-          node ${serverPath}  (ODW_HOST=cursor)
+          node ${serverPath}  (ODW_HOST=${host})
   Plugin: ${localPlugin}  (${localMode})
   Skill:  ${join(skillDest, "SKILL.md")}
 
 A new \`agent\` session should see the \`workflow\` tool and the
 \`open-dynamic-workflows\` authoring skill. Omitted executor is cursor.
+Host configuration is not runtime attestation. Grok Bot must supply an absolute
+VM project cwd and separately verify CLI authentication, model and usage pool.
 
 If the server is listed but not enabled:
 
