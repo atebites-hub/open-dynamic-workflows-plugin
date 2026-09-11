@@ -5,6 +5,9 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync 
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
+const host = process.argv[2] ?? 'zcode';
+assert.ok(['zcode', 'cursor', 'grok-bot'].includes(host), 'unsupported fixture host');
+const kind = host === 'grok-bot' ? 'cursor' : host;
 const root = mkdtempSync(join(tmpdir(), 'odw-packaged-isolation-'));
 const repo = join(root, 'repo');
 mkdirSync(repo);
@@ -19,14 +22,15 @@ writeFileSync(fake, `#!/usr/bin/env node
 const fs=require('node:fs');const cp=require('node:child_process');
 const branch=cp.execFileSync('git',['branch','--show-current'],{encoding:'utf8'}).trim();
 if(!branch.startsWith('odw/')||process.env.ODW_LEAF!=='1')process.exit(9);
-const prompt=process.argv[process.argv.indexOf('--prompt')+1];
+const prompt=process.env.ODW_FIXTURE_KIND==='cursor'?process.argv.at(-1):process.argv[process.argv.indexOf('--prompt')+1];
 fs.writeFileSync('shared.txt',prompt+'\\n');
-console.log(JSON.stringify({type:'zcode_result',text:JSON.stringify({branch,cwd:process.cwd()}),stderr:'',exitCode:0,sessionId:'fake-'+process.pid,telemetryAvailable:false}));
+const text=JSON.stringify({branch,cwd:process.cwd()});
+console.log(JSON.stringify(process.env.ODW_FIXTURE_KIND==='cursor'?{type:'result',subtype:'success',is_error:false,result:text,session_id:'fake-'+process.pid}:{type:'zcode_result',text,stderr:'',exitCode:0,sessionId:'fake-'+process.pid,telemetryAvailable:false}));
 `);
 chmodSync(fake, 0o755);
 const child = spawn(process.execPath, [resolve(import.meta.dirname, '../dist/mcp/server.js')], {
-  cwd: repo, env: { ...process.env, ODW_HOST: 'zcode', ODW_REQUIRE_CWD: '', ODW_LEAF: '',
-    ODW_GROK_LEAF: '', ODW_CURSOR_LEAF: '', ZCODE_BIN: fake },
+  cwd: repo, env: { ...process.env, ODW_HOST: host, ODW_REQUIRE_CWD: '', ODW_LEAF: '',
+    ODW_GROK_LEAF: '', ODW_CURSOR_LEAF: '', ODW_FIXTURE_KIND: kind, ZCODE_BIN: fake, CURSOR_BIN: fake },
   stdio: ['pipe', 'pipe', 'pipe'],
 });
 let pending = '';
@@ -56,6 +60,7 @@ try {
   } });
   assert.equal(reply.result.isError, false);
   const result = JSON.parse(reply.result.content[0].text);
+  assert.deepEqual(result.executionContext, { host, defaultExecutor: kind });
   assert.equal(result.failedAgents, 0);
   assert.equal(result.durable, true);
   const workers = result.value.map(JSON.parse);
@@ -66,7 +71,7 @@ try {
     assert.equal(readFileSync(join(worker.cwd, 'shared.txt'), 'utf8'), (index ? 'two' : 'one') + '\n');
   }
   assert.ok(result.worktreeNotes.some(note => note.includes('receipt=')));
-  console.log('PASS: packaged MCP isolates two subprocess writers and retains branch/diff receipts');
+  console.log(`PASS: ${host} -> ${kind}: packaged MCP isolates two subprocess writers and retains branch/diff receipts (fake model CLI, not live attestation)`);
 } finally {
   child.kill();
   rmSync(root, { recursive: true, force: true });

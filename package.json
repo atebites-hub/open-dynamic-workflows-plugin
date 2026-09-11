@@ -1,6 +1,6 @@
 {
   "name": "open-dynamic-workflows-plugin",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "description": "Dynamic workflow orchestration for Cursor, Grok Build, Claude Code, Codex, and ZCode. Dev dependencies only; the shipped dist/mcp/server.js is self-contained.",
   "license": "MIT",
@@ -13,7 +13,7 @@
     "test:cursor-cli": "node --test scripts/cursor-cli.test.mjs",
     "install:cursor-cli": "node scripts/install-cursor-cli.mjs",
     "typecheck": "tsc --noEmit",
-    "verify": "npm run build && npm run typecheck && npm run test:host && npm run test:cursor-cli && npm run smoke && node scripts/worktree-smoke.mjs",
+    "verify": "npm run build && npm run typecheck && npm run test:host && npm run test:cursor-cli && npm run smoke && node scripts/worktree-smoke.mjs && node scripts/worktree-smoke.mjs cursor && node scripts/worktree-smoke.mjs grok-bot",
     "sync:nested-pins": "bash scripts/sync-nested-pins.sh check"
   },
   "devDependencies": {

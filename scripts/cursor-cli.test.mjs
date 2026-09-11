@@ -178,6 +178,27 @@ test("installer is idempotent and refreshes a stale MCP path", () => {
   }
 });
 
+test("Grok Bot installer keeps host identity and existing MCP entries", () => {
+  const home = mkdtempSync(join(tmpdir(), "odw-grokbot-install-"));
+  try {
+    mkdirSync(join(home, ".cursor"), { recursive: true });
+    const path = join(home, ".cursor", "mcp.json");
+    writeFileSync(path, JSON.stringify({ mcpServers: { other: { command: "keep" } } }));
+    runInstaller(home, ["--host", "grok-bot"]);
+    runInstaller(home, ["--host", "grok-bot"]);
+    const config = readJson(path);
+    assert.deepEqual(config.mcpServers.other, { command: "keep" });
+    assert.equal(config.mcpServers["open-dynamic-workflows"].env.ODW_HOST, "grok-bot");
+    const before = readFileSync(path, "utf8");
+    const bad = spawnSync(process.execPath, [installer, "--home", home, "--host", "grok"], { encoding: "utf8" });
+    assert.notEqual(bad.status, 0);
+    assert.match(bad.stderr, /--host must be cursor or grok-bot/);
+    assert.equal(readFileSync(path, "utf8"), before);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("installer refuses to follow a symlink-escape plugin-root", () => {
   const home = mkdtempSync(join(tmpdir(), "odw-cursor-cli-escape-"));
   const decoy = mkdtempSync(join(tmpdir(), "odw-cursor-cli-decoy-"));

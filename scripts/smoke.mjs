@@ -212,7 +212,7 @@ expect("Codex manifest is native-ultra advice only", () => {
   assert.equal(existsSync(resolve(root, "native/codex/open-dynamic-workflows/.mcp.json")), false);
   assert.equal(codexManifest.mcpServers, undefined);
 });
-expect("all host manifests and marketplace entries use release 0.4.0", () => {
+expect("all host manifests and marketplace entries use release 0.4.1", () => {
   for (const relative of [
     ".codex-plugin/plugin.json",
     ".cursor-plugin/plugin.json",
@@ -221,14 +221,14 @@ expect("all host manifests and marketplace entries use release 0.4.0", () => {
     ".zcode-plugin/plugin.json",
     "plugin.json",
   ]) {
-    assert.equal(JSON.parse(readFileSync(resolve(root, relative), "utf8")).version, "0.4.0", relative);
+    assert.equal(JSON.parse(readFileSync(resolve(root, relative), "utf8")).version, "0.4.1", relative);
   }
   for (const relative of [
     "marketplace.json",
     ".agents/plugins/marketplace.json",
     ".grok-plugin/marketplace.json",
   ]) {
-    assert.equal(JSON.parse(readFileSync(resolve(root, relative), "utf8")).plugins[0].version, "0.4.0", relative);
+    assert.equal(JSON.parse(readFileSync(resolve(root, relative), "utf8")).plugins[0].version, "0.4.1", relative);
   }
 });
 expect("Codex MCP command is plugin-relative", () => {
