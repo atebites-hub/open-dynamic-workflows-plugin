@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "open-dynamic-workflows",
-      "version": "0.4.1",
+      "version": "0.4.2",
       "description": "ODW for Cursor, Grok Bot (via Cursor CLI), Grok Build, ZCode, Antigravity and Copilot, with safe worktree isolation. Claude and Codex hosts use native ultracode/ultra instead.",
       "category": "developer-tools",
       "source": {

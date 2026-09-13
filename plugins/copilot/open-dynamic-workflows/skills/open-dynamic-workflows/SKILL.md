@@ -32,6 +32,28 @@ remain available to standalone SDK callers, not their native-only host packages.
 
 ## Worktree safety
 
+### Grok Bot: short calls, background execution
+
+On Grok Bot, `workflow` starts a background job and returns `{jobId, state,
+terminal:false, ok:null}` promptly. Do not treat acceptance as completion.
+Call `workflow_status({cwd, jobId, waitSeconds:10})` until terminal; each status
+call waits at most 20 seconds. Require `state:"completed"` and `ok:true` and
+inspect `result` for zero failed nodes, durable journals and worktree receipts.
+The returned core `runId` is not the control `jobId`.
+
+Use a stable unique `requestId` on start if submission might be retried; only
+identical snapshotted inputs reuse a job. This does not replay agent calls.
+`maxSeconds` sets the job deadline (default 1800, range 1-28800), plus at most
+5 seconds cleanup grace. `workflow_cancel({cwd,jobId})` explicitly stops a job;
+closing or cancelling a completed start/status request does not stop workers.
+
+Always pass the same absolute VM cwd. Preserve `.odw/.jobs/` and run receipts;
+gitignore them because they may contain prompts/results. Cancelled, timed_out,
+failed or interrupted states are not passes, even if files changed. Do not
+silently resubmit an interrupted job or switch models. This survives normal
+MCP disconnection, not VM loss, and does not establish strict Advisor routing.
+Other hosts retain their existing synchronous workflow contract.
+
 Use `isolation: 'worktree'` for workers that mutate files concurrently, not for
 every read-only task. The first isolated worker pins the caller HEAD for the whole
 run, including nested workflows. Staged/unstaged caller edits are not copied or

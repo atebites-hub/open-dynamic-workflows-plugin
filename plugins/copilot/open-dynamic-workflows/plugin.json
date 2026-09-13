@@ -1,6 +1,6 @@
 {
   "name": "open-dynamic-workflows",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "ODW for Copilot with host-specific workers and safe worktree retention.",
   "skills": "./skills",
   "mcpServers": {

@@ -1052,10 +1052,10 @@ var require_util = __commonJS({
     var codegen_1 = require_codegen();
     var code_1 = require_code();
     function toHash(arr) {
-      const hash = {};
+      const hash2 = {};
       for (const item of arr)
-        hash[item] = true;
-      return hash;
+        hash2[item] = true;
+      return hash2;
     }
     exports.toHash = toHash;
     function alwaysValidSchema(it, schema) {
@@ -2975,7 +2975,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve.call(this, root, ref);
+      let _sch = resolve2.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref];
         const { schemaId } = this.opts;
@@ -3002,7 +3002,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve(root, ref) {
+    function resolve2(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3832,7 +3832,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve(baseURI, relativeURI, options) {
+    function resolve2(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -4200,7 +4200,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve,
+      resolve: resolve2,
       resolveComponent,
       equal,
       serialize,
@@ -7392,10 +7392,10 @@ function abortableSleep(ms, signal) {
     return Promise.resolve();
   if (signal?.aborted)
     return Promise.reject(new AbortError("aborted"));
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve2, reject) => {
     const timer = setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);
-      resolve();
+      resolve2();
     }, ms);
     const onAbort = () => {
       clearTimeout(timer);
@@ -7705,8 +7705,8 @@ function createSemaphore(limit) {
         active += 1;
         return Promise.resolve();
       }
-      return new Promise((resolve) => {
-        waiters.push(resolve);
+      return new Promise((resolve2) => {
+        waiters.push(resolve2);
       });
     },
     release() {
@@ -8042,7 +8042,7 @@ function makeSubprocessExecutor(spec) {
       console.error(`[odw:${spec.command}] ${msg}`);
   };
   return (opts) => {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve2, reject) => {
       const startedAt = Date.now();
       const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
       let settled = false;
@@ -8098,11 +8098,13 @@ function makeSubprocessExecutor(spec) {
           // 子进程、bash）。取消时必须杀掉整棵进程树，而不只是顶层
           // process, or those grandchildren are orphaned. We keep the pipes (no unref).
           // 进程，否则那些孙子进程会变成孤儿。我们保留管道（不 unref）。
-          detached: true
+          detached: opts.processGroup !== "inherit"
         });
         const killTree = (sig) => {
           try {
-            if (child.pid !== void 0)
+            if (opts.processGroup === "inherit")
+              child.kill(sig);
+            else if (child.pid !== void 0)
               process.kill(-child.pid, sig);
             else
               child.kill(sig);
@@ -8118,36 +8120,68 @@ function makeSubprocessExecutor(spec) {
         let stderrBuf = "";
         let sawStdout = false;
         const onAbort = () => {
-          if (settled)
-            return;
-          settled = true;
-          clearTimers();
-          killTree("SIGKILL");
-          runCleanup();
-          dbg("aborted by signal");
-          reject(new Error(`${spec.command} aborted`));
+          fail2(`${spec.command} aborted`, "aborted");
         };
-        const fail2 = (message) => {
+        const fail2 = (message, subtype = "error_during_execution") => {
           if (settled)
             return;
           settled = true;
           clearTimers();
           opts.signal?.removeEventListener("abort", onAbort);
           killTree("SIGKILL");
-          runCleanup();
           dbg(`fail: ${message}`);
-          reject(new Error(message));
+          const tail = stdoutBuf.trim();
+          if (tail) {
+            try {
+              const event = spec.parseLine(tail);
+              if (event !== null)
+                events.push(event);
+            } catch {
+            }
+          }
+          stdoutBuf = "";
+          let runtimeId = null;
+          try {
+            runtimeId = spec.reduce(events, { stderr: stderrBuf, exitCode: null, opts }).sessionId;
+          } catch {
+          }
+          const finishFailure = () => {
+            runCleanup();
+            reject(new Error(message));
+          };
+          if (opts.tracePath) {
+            void writeTrace(opts.tracePath, {
+              command: spec.command,
+              args,
+              cwd: opts.cwd,
+              prompt: opts.prompt,
+              durationMs: Date.now() - startedAt,
+              exitCode: null,
+              isError: true,
+              resultSubtype: subtype,
+              stderr: `${stderrBuf}${stderrBuf ? "\n" : ""}${message}`,
+              events,
+              ...opts.routingPolicyFingerprint !== void 0 && opts.effectiveRoute !== void 0 ? { routing: {
+                policyFingerprint: opts.routingPolicyFingerprint,
+                executor: opts.effectiveRoute.executor,
+                model: opts.effectiveRoute.model,
+                reasoningEffort: opts.effectiveRoute.reasoningEffort,
+                runtimeId
+              } } : {}
+            }).then(finishFailure);
+          } else
+            finishFailure();
         };
         if (opts.signal) {
           opts.signal.addEventListener("abort", onAbort, { once: true });
         }
-        wallTimer = setTimeout(() => fail2(`${spec.command} timeout`), timeoutMs);
+        wallTimer = setTimeout(() => fail2(`${spec.command} timeout`, "timeout"), timeoutMs);
         const armIdle = () => {
           if (opts.idleTimeoutMs === void 0)
             return;
           if (idleTimer)
             clearTimeout(idleTimer);
-          idleTimer = setTimeout(() => fail2(`${spec.command} idle timeout` + (sawStdout ? "" : " (no stdout received \u2014 for single-envelope executors like zcode, idleTimeoutMs is stream-based and ineffective; use the wall timeout)")), opts.idleTimeoutMs);
+          idleTimer = setTimeout(() => fail2(`${spec.command} idle timeout` + (sawStdout ? "" : " (no stdout received \u2014 for single-envelope executors like zcode, idleTimeoutMs is stream-based and ineffective; use the wall timeout)"), "idle_timeout"), opts.idleTimeoutMs);
         };
         armIdle();
         const consume = (chunk) => {
@@ -8164,7 +8198,8 @@ function makeSubprocessExecutor(spec) {
         child.stdout.setEncoding("utf8");
         child.stdout.on("data", (chunk) => {
           sawStdout = true;
-          armIdle();
+          if (!settled)
+            armIdle();
           consume(chunk);
         });
         child.stderr.setEncoding("utf8");
@@ -8213,7 +8248,7 @@ function makeSubprocessExecutor(spec) {
               result.structuredOutput = core.structuredOutput;
             }
             runCleanup();
-            resolve(result);
+            resolve2(result);
           };
           if (opts.tracePath) {
             void writeTrace(opts.tracePath, {
@@ -9327,7 +9362,7 @@ var copilotExecutor = (opts) => makeSubprocessExecutor({
 
 // src/mcp/server.ts
 import { realpath } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { isAbsolute as isAbsolute2 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/mcp/host.ts
@@ -9352,12 +9387,344 @@ function nativeOrchestrationAdvice(host) {
   return void 0;
 }
 
+// src/mcp/background.ts
+import { spawn as spawn2 } from "node:child_process";
+import { createHash as createHash3, randomUUID } from "node:crypto";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync as mkdirSync2,
+  openSync,
+  readFileSync,
+  realpathSync as realpathSync2,
+  renameSync,
+  rmSync,
+  writeFileSync as writeFileSync2
+} from "node:fs";
+import { isAbsolute, join as join3, resolve } from "node:path";
+var TERMINAL = /* @__PURE__ */ new Set(["completed", "failed", "cancelled", "timed_out", "interrupted"]);
+var JOB_ID = /^(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|req-[0-9a-f]{64})$/;
+var GRACE_MS = 5e3;
+var now2 = () => (/* @__PURE__ */ new Date()).toISOString();
+var hash = (text) => createHash3("sha256").update(text).digest("hex");
+var readJson = (file) => JSON.parse(readFileSync(file, "utf8"));
+function atomicJson(file, value) {
+  const temporary = `${file}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync2(temporary, JSON.stringify(value) + "\n", { flag: "wx", mode: 384 });
+    renameSync(temporary, file);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+}
+function rootFor(cwd, create = false) {
+  if (typeof cwd !== "string" || !isAbsolute(cwd)) throw new Error("background workflow cwd must be absolute");
+  const canonical = realpathSync2(cwd);
+  const root = join3(canonical, ".odw", ".jobs");
+  if (create) mkdirSync2(root, { recursive: true, mode: 448 });
+  if (realpathSync2(root) !== root) throw new Error("background job storage must not use symlinks");
+  return { cwd: canonical, root };
+}
+function locate(cwd, jobId) {
+  if (typeof jobId !== "string" || !JOB_ID.test(jobId)) throw new Error("invalid background jobId");
+  const owner = rootFor(cwd);
+  const directory = join3(owner.root, jobId);
+  if (realpathSync2(directory) !== directory) throw new Error("background job directory must not use symlinks");
+  const job = readJson(join3(directory, "state.json"));
+  if (job.jobId !== jobId || job.cwd !== owner.cwd) throw new Error("background job ownership mismatch");
+  return { directory, job };
+}
+function readJob(cwd, jobId) {
+  const { job } = locate(cwd, jobId);
+  if (!TERMINAL.has(job.state)) {
+    let missing = false;
+    if (job.supervisorPid !== void 0) {
+      try {
+        process.kill(job.supervisorPid, 0);
+      } catch (error) {
+        missing = error.code === "ESRCH";
+      }
+    }
+    if (missing || Date.now() > Date.parse(job.deadlineAt) + GRACE_MS + 5e3) {
+      return { ...job, state: "interrupted", error: "Job supervisor stopped without a terminal receipt; inspect retained artifacts. No automatic replay." };
+    }
+  }
+  return job;
+}
+function reply(job) {
+  const { supervisorPid: _pid, inputHash: _hash, ...publicJob } = job;
+  const terminal = TERMINAL.has(job.state);
+  return {
+    content: [{ type: "text", text: JSON.stringify({
+      ...publicJob,
+      terminal,
+      ok: terminal ? job.state === "completed" : null,
+      ...!terminal ? { next: { tool: "workflow_status", arguments: { cwd: job.cwd, jobId: job.jobId, waitSeconds: 10 } } } : {}
+    }) }],
+    isError: terminal && job.state !== "completed"
+  };
+}
+async function startBackground(input, entrypoint, signal, sandboxCwd) {
+  if (process.platform === "win32") throw new Error("Grok Bot background jobs require POSIX process groups");
+  const maxSeconds = input.maxSeconds ?? 1800;
+  if (typeof maxSeconds !== "number" || !Number.isInteger(maxSeconds) || maxSeconds < 1 || maxSeconds > 28800) {
+    throw new Error("maxSeconds must be an integer from 1 to 28800 (default 1800)");
+  }
+  const requestId = input.requestId;
+  if (requestId !== void 0 && (typeof requestId !== "string" || !requestId.trim() || requestId.length > 128)) {
+    throw new Error("requestId must be a nonempty string of at most 128 characters");
+  }
+  if (signal?.aborted) throw new Error("workflow start cancelled before acceptance");
+  const owner = rootFor(input.cwd, true);
+  const { maxSeconds: _limit, requestId: _request, ...workflow } = input;
+  workflow.cwd = owner.cwd;
+  if (typeof workflow.scriptPath === "string") {
+    workflow.script = readFileSync(resolve(owner.cwd, workflow.scriptPath), "utf8");
+    delete workflow.scriptPath;
+  }
+  const request = { workflow, ...sandboxCwd !== void 0 ? { sandboxCwd } : {} };
+  const inputHash = hash(JSON.stringify({ request, maxSeconds }));
+  const jobId = requestId === void 0 ? randomUUID() : `req-${hash(requestId)}`;
+  const directory = join3(owner.root, jobId);
+  try {
+    mkdirSync2(directory, { mode: 448 });
+  } catch (error) {
+    if (error.code !== "EEXIST" || requestId === void 0) throw error;
+    const existing = readJob(owner.cwd, jobId);
+    if (existing.inputHash !== inputHash) throw new Error("requestId was already used with different workflow inputs");
+    return reply(existing);
+  }
+  const createdAt = now2();
+  const job = {
+    jobId,
+    cwd: owner.cwd,
+    state: "queued",
+    createdAt,
+    updatedAt: createdAt,
+    deadlineAt: new Date(Date.now() + maxSeconds * 1e3).toISOString(),
+    inputHash,
+    agentCount: 0,
+    finishedAgents: 0,
+    failedAgents: 0
+  };
+  atomicJson(join3(directory, "request.json"), request);
+  atomicJson(join3(directory, "state.json"), job);
+  const log = openSync(join3(directory, "runner.log"), "a", 384);
+  try {
+    await new Promise((resolveSpawn, rejectSpawn) => {
+      const supervisor = spawn2(process.execPath, [entrypoint, "--odw-job-supervisor", directory], {
+        cwd: owner.cwd,
+        env: process.env,
+        detached: true,
+        stdio: ["ignore", log, log]
+      });
+      supervisor.once("error", rejectSpawn);
+      supervisor.once("spawn", () => {
+        supervisor.unref();
+        resolveSpawn();
+      });
+    });
+  } catch (error) {
+    job.state = "failed";
+    job.error = String(error);
+    job.updatedAt = now2();
+    atomicJson(join3(directory, "state.json"), job);
+    return reply(job);
+  } finally {
+    closeSync(log);
+  }
+  if (signal?.aborted) return cancelBackground({ cwd: owner.cwd, jobId });
+  return reply(job);
+}
+async function statusBackground(args, signal) {
+  const waitSeconds = args.waitSeconds ?? 10;
+  if (typeof waitSeconds !== "number" || !Number.isInteger(waitSeconds) || waitSeconds < 0 || waitSeconds > 20) {
+    throw new Error("waitSeconds must be an integer from 0 to 20");
+  }
+  const deadline = Date.now() + waitSeconds * 1e3;
+  let job = readJob(args.cwd, args.jobId);
+  while (!TERMINAL.has(job.state) && Date.now() < deadline) {
+    if (signal?.aborted) throw new Error("status request cancelled; background job is unchanged");
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    job = readJob(args.cwd, args.jobId);
+  }
+  return reply(job);
+}
+function cancelBackground(args) {
+  const { directory, job } = locate(args.cwd, args.jobId);
+  if (TERMINAL.has(job.state)) return reply(job);
+  try {
+    writeFileSync2(join3(directory, "cancel"), "cancel\n", { flag: "wx", mode: 384 });
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+  }
+  return reply({ ...readJob(args.cwd, args.jobId), state: "cancelling" });
+}
+function parseResult(result) {
+  let summary;
+  try {
+    summary = JSON.parse(result.content[0]?.text ?? "{}");
+  } catch {
+    summary = { error: result.content[0]?.text ?? "Missing workflow result" };
+  }
+  const accepted = !result.isError && summary.ok === true && summary.durable === true && summary.failedAgents === 0 && summary.failedWorkflows === 0;
+  return { ...summary, scriptOk: summary.ok ?? false, ok: accepted };
+}
+async function superviseBackground(directory, entrypoint) {
+  const request = readJson(join3(directory, "request.json"));
+  const stateFile = join3(directory, "state.json");
+  const job = readJson(stateFile);
+  locate(request.workflow.cwd, job.jobId);
+  job.supervisorPid = process.pid;
+  job.state = "running";
+  const persist = () => {
+    job.updatedAt = now2();
+    atomicJson(stateFile, job);
+  };
+  persist();
+  await new Promise((resolveDone) => {
+    let child;
+    let stopped;
+    let finished = false;
+    let tick;
+    let grace;
+    const killOwnedGroup = () => {
+      if (!child?.pid) return;
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+        }
+      }
+    };
+    const finish = (result, error) => {
+      if (finished) return;
+      finished = true;
+      if (tick) clearInterval(tick);
+      if (grace) clearTimeout(grace);
+      if (result) job.result = parseResult(result);
+      job.state = stopped ?? (job.result?.ok === true ? "completed" : "failed");
+      if (error) job.error = error;
+      try {
+        persist();
+      } catch (failure) {
+        console.error("[odw] terminal job receipt failed:", failure);
+      } finally {
+        killOwnedGroup();
+        resolveDone();
+      }
+    };
+    const stop = (reason) => {
+      if (finished || stopped) return;
+      stopped = reason;
+      job.state = "cancelling";
+      try {
+        persist();
+      } catch (error) {
+        console.error(error);
+      }
+      if (!child) {
+        finish(void 0, reason);
+        return;
+      }
+      if (child.connected) child.send({ kind: "cancel" }, () => {
+      });
+      grace = setTimeout(() => finish(void 0, `${reason}: runtime stopped after cleanup grace`), GRACE_MS);
+    };
+    process.once("SIGTERM", () => stop("interrupted"));
+    process.once("SIGINT", () => stop("interrupted"));
+    if (existsSync(join3(directory, "cancel"))) {
+      stop("cancelled");
+      return;
+    }
+    if (Date.now() >= Date.parse(job.deadlineAt)) {
+      stop("timed_out");
+      return;
+    }
+    child = spawn2(process.execPath, [entrypoint, "--odw-job-execute", directory], {
+      cwd: job.cwd,
+      env: process.env,
+      detached: true,
+      stdio: ["ignore", "inherit", "inherit", "ipc"]
+    });
+    child.on("message", (message) => {
+      if (finished || !message || typeof message !== "object") return;
+      const data = message;
+      if (data.kind === "event" && data.event) {
+        const event = data.event;
+        if (event.type === "run_start") job.runId = event.runId;
+        if (event.type === "agent_start") job.agentCount++;
+        if (event.type === "agent_end") {
+          job.finishedAgents++;
+          if (!event.ok) job.failedAgents++;
+        }
+        try {
+          persist();
+        } catch (error) {
+          stop("interrupted");
+          console.error(error);
+        }
+      } else if (data.kind === "result" && data.result) {
+        if (!stopped && existsSync(join3(directory, "cancel"))) stopped = "cancelled";
+        if (!stopped && Date.now() >= Date.parse(job.deadlineAt)) stopped = "timed_out";
+        finish(data.result);
+      }
+    });
+    child.once("error", (error) => finish(void 0, String(error)));
+    child.once("close", (code, signal) => finish(void 0, `Runtime exited without result: code=${code}, signal=${signal}`));
+    tick = setInterval(() => {
+      if (existsSync(join3(directory, "cancel"))) stop("cancelled");
+      else if (Date.now() >= Date.parse(job.deadlineAt)) stop("timed_out");
+      if (!finished && Date.now() - Date.parse(job.updatedAt) >= 1e3) {
+        try {
+          persist();
+        } catch (error) {
+          stop("interrupted");
+          console.error(error);
+        }
+      }
+    }, 100);
+  });
+}
+async function executeBackground(directory, execute) {
+  if (!process.send) throw new Error("Background runtime requires its supervisor IPC channel");
+  const request = readJson(join3(directory, "request.json"));
+  const job = readJson(join3(directory, "state.json"));
+  locate(request.workflow.cwd, job.jobId);
+  const controller = new AbortController();
+  process.on("message", (message) => {
+    if (message && typeof message === "object" && message.kind === "cancel") controller.abort();
+  });
+  process.once("disconnect", () => {
+    controller.abort();
+    setTimeout(() => {
+      try {
+        process.kill(-process.pid, "SIGKILL");
+      } catch {
+        process.exit(1);
+      }
+    }, GRACE_MS);
+  });
+  const send = (message) => {
+    if (process.connected) process.send?.(message, () => {
+    });
+  };
+  try {
+    const result = await execute(request.workflow, controller.signal, request.sandboxCwd, (event) => send({ kind: "event", event }));
+    send({ kind: "result", result });
+  } catch (error) {
+    send({ kind: "result", result: { content: [{ type: "text", text: String(error) }], isError: true } });
+  }
+}
+
 // src/mcp/server.ts
 var SERVER_INFO = {
   name: "open-dynamic-workflows",
-  version: "0.4.1"
+  version: "0.4.2"
 };
-var EXECUTORS = {
+var RAW_EXECUTORS = {
   antigravity: antigravityExecutor,
   copilot: copilotExecutor,
   cursor: cursorExecutor,
@@ -9366,14 +9733,26 @@ var EXECUTORS = {
   claude: claudeExecutor,
   codex: codexExecutor
 };
+var EXECUTORS = process.argv[2] === "--odw-job-execute" ? Object.fromEntries(Object.entries(RAW_EXECUTORS).map(([name, execute]) => [
+  name,
+  (opts) => execute({ ...opts, processGroup: "inherit" })
+])) : RAW_EXECUTORS;
 var SANDBOX_META_KEY = "codex/sandbox-state-meta";
 var HOST = detectHost();
 var DEFAULT_EXECUTOR = defaultExecutorForHost();
 var NATIVE_ADVICE = nativeOrchestrationAdvice(HOST);
 var NESTED_LEAF = process.env.ODW_LEAF === "1" || process.env.ODW_GROK_LEAF === "1" || process.env.ODW_CURSOR_LEAF === "1";
+var BACKGROUND_HOST = HOST === "grok-bot" && !NATIVE_ADVICE && !NESTED_LEAF;
 var WORKFLOW_TOOL = {
   name: "workflow",
   description: [
+    ...HOST === "grok-bot" ? [
+      "GROK BOT: this call STARTS a background job and returns a jobId promptly, not a completed result.",
+      "Poll workflow_status with the same cwd/jobId (waitSeconds <= 20). Require state=completed and ok=true.",
+      "Use workflow_cancel for explicit cancellation. A closed/expired MCP request does not cancel an accepted job.",
+      "Pass a stable requestId when retrying submission; matching inputs return the same job, never another run.",
+      "maxSeconds bounds execution (default 1800, maximum 28800), plus at most 5 seconds cleanup grace."
+    ] : [],
     "Execute a dynamic workflow script across Cursor, Grok Build, ZCode, Antigravity, and Copilot workers.",
     "A dynamic workflow is plain JavaScript (NOT TypeScript) that orchestrates subagents at scale:",
     "the model writes the script, this tool runs it.",
@@ -9466,11 +9845,33 @@ var WORKFLOW_TOOL = {
           model: { type: "string", minLength: 1 },
           reasoningEffort: { type: "string", minLength: 1 }
         }
-      }
+      },
+      ...HOST === "grok-bot" ? {
+        requestId: { type: "string", minLength: 1, maxLength: 128, description: "Stable unique submission key; reuse only for an identical start retry." },
+        maxSeconds: { type: "integer", minimum: 1, maximum: 28800, default: 1800, description: "Background execution deadline in seconds, independent of MCP request timeouts." }
+      } : {}
     }
   }
 };
-var TOOLS = NESTED_LEAF || NATIVE_ADVICE ? [] : [WORKFLOW_TOOL];
+var JOB_PROPERTIES = {
+  cwd: { type: "string", minLength: 1, description: "The same absolute VM project directory supplied to workflow." },
+  jobId: { type: "string", minLength: 1, description: "Opaque jobId returned by workflow; not the nested core runId." }
+};
+var TOOLS = NESTED_LEAF || NATIVE_ADVICE ? [] : [WORKFLOW_TOOL, ...BACKGROUND_HOST ? [
+  {
+    name: "workflow_status",
+    description: "Read a Grok Bot background job. Poll until terminal; only state=completed with ok=true is success. Failed, cancelled, timed_out and interrupted jobs are not passes. Results and available receipts remain on disk; this tool never restarts work.",
+    inputSchema: { type: "object", required: ["cwd", "jobId"], additionalProperties: false, properties: {
+      ...JOB_PROPERTIES,
+      waitSeconds: { type: "integer", minimum: 0, maximum: 20, default: 10 }
+    } }
+  },
+  {
+    name: "workflow_cancel",
+    description: "Explicitly cancel a Grok Bot background job and its owned worker process group. Idempotent; poll workflow_status for the final cancellation receipt. Partial files and logs are retained.",
+    inputSchema: { type: "object", required: ["cwd", "jobId"], additionalProperties: false, properties: JOB_PROPERTIES }
+  }
+] : []];
 var activeCalls = /* @__PURE__ */ new Map();
 var responseFraming = "content-length";
 function writeMessage(message) {
@@ -9491,7 +9892,7 @@ function ok(id, result) {
 function fail(id, code, message) {
   writeMessage({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
 }
-async function runWorkflowTool(args, signal, sandboxCwd) {
+async function prepareWorkflow(args, sandboxCwd) {
   if (NATIVE_ADVICE) {
     return { content: [{ type: "text", text: NATIVE_ADVICE }], isError: true };
   }
@@ -9541,7 +9942,7 @@ async function runWorkflowTool(args, signal, sandboxCwd) {
       isError: true
     };
   }
-  if (requestedCwd !== void 0 && (typeof requestedCwd !== "string" || !requestedCwd || !isAbsolute(requestedCwd))) {
+  if (requestedCwd !== void 0 && (typeof requestedCwd !== "string" || !requestedCwd || !isAbsolute2(requestedCwd))) {
     return {
       content: [{ type: "text", text: "workflow `cwd` must be an absolute project path." }],
       isError: true
@@ -9584,6 +9985,20 @@ async function runWorkflowTool(args, signal, sandboxCwd) {
     }
   }
   const cwd = requestedCwd || process.env.ZCODE_PROJECT_DIR || process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  return { input: {
+    cwd,
+    ...script !== void 0 ? { script } : {},
+    ...scriptPath !== void 0 ? { scriptPath } : {},
+    ...workflowArgs !== void 0 ? { args: workflowArgs } : {},
+    ...resumeFromRunId !== void 0 ? { resumeFromRunId } : {},
+    ...routingPolicy !== void 0 ? { routingPolicy } : {},
+    ...isolation !== void 0 ? { isolation } : {}
+  } };
+}
+async function runWorkflowTool(args, signal, sandboxCwd, onEvent) {
+  const prepared = await prepareWorkflow(args, sandboxCwd);
+  if ("isError" in prepared) return prepared;
+  const { cwd, script, scriptPath, args: workflowArgs, resumeFromRunId, routingPolicy, isolation } = prepared.input;
   let result;
   try {
     result = await runWorkflow({
@@ -9600,6 +10015,7 @@ async function runWorkflowTool(args, signal, sandboxCwd) {
       onEvent: (event) => {
         process.stderr.write(`[odw] ${event.type}
 `);
+        onEvent?.(event);
       }
     });
   } catch (err) {
@@ -9683,7 +10099,7 @@ function handleRequest(msg) {
       const toolParams = params;
       const name = toolParams.name;
       const callArgs = toolParams.arguments ?? {};
-      if (name !== "workflow") {
+      if (name !== "workflow" && !(BACKGROUND_HOST && (name === "workflow_status" || name === "workflow_cancel"))) {
         fail(id, -32601, `Unknown tool: ${name}`);
         return;
       }
@@ -9695,7 +10111,21 @@ function handleRequest(msg) {
       activeCalls.set(id, controller);
       const sandboxState = toolParams._meta?.[SANDBOX_META_KEY];
       const sandboxCwd = typeof sandboxState === "object" && sandboxState !== null && "sandboxCwd" in sandboxState ? sandboxState.sandboxCwd : void 0;
-      void runWorkflowTool(callArgs, controller.signal, sandboxCwd).then((toolResult) => ok(id, toolResult)).catch((err) => {
+      const executeCall = async () => {
+        if (!BACKGROUND_HOST) return runWorkflowTool(callArgs, controller.signal, sandboxCwd);
+        if (name === "workflow_status") return statusBackground(callArgs, controller.signal);
+        if (name === "workflow_cancel") return cancelBackground(callArgs);
+        const prepared = await prepareWorkflow(callArgs, sandboxCwd);
+        if ("isError" in prepared) return prepared;
+        const controls = callArgs;
+        return startBackground(
+          { ...prepared.input, requestId: controls.requestId, maxSeconds: controls.maxSeconds },
+          fileURLToPath(import.meta.url),
+          controller.signal,
+          sandboxCwd
+        );
+      };
+      void executeCall().then((toolResult) => ok(id, toolResult)).catch((err) => {
         const message = err instanceof Error ? err.message : String(err);
         ok(id, {
           content: [{ type: "text", text: `workflow request failed: ${message}` }],
@@ -9730,42 +10160,51 @@ function handleRaw(raw) {
   }
   handleRequest(msg);
 }
-var buffer = Buffer.alloc(0);
-process.stdin.on("data", (chunk) => {
-  buffer = Buffer.concat([buffer, chunk]);
-  while (true) {
-    const headerEnd = buffer.indexOf("\r\n\r\n");
-    if (headerEnd === -1) {
-      const asText = buffer.toString("utf8");
-      if (asText.includes("\n") && asText.trimStart().startsWith("{")) {
-        responseFraming = "line";
-        const lines = asText.split(/\r?\n/);
-        buffer = Buffer.from(lines.pop() || "", "utf8");
-        for (const line of lines) handleRaw(line);
-      }
-      break;
-    }
-    const header = buffer.slice(0, headerEnd).toString("utf8");
-    const match = /Content-Length:\s*(\d+)/i.exec(header);
-    if (!match) {
-      buffer = buffer.slice(headerEnd + 4);
-      continue;
-    }
-    const length = Number(match[1]);
-    const bodyStart = headerEnd + 4;
-    const bodyEnd = bodyStart + length;
-    if (buffer.length < bodyEnd) break;
-    const body = buffer.slice(bodyStart, bodyEnd).toString("utf8");
-    buffer = buffer.slice(bodyEnd);
-    responseFraming = "content-length";
-    handleRaw(body);
+if (process.argv[2] === "--odw-job-supervisor" || process.argv[2] === "--odw-job-execute") {
+  if (!BACKGROUND_HOST) throw new Error("Background runtime modes require the Grok Bot host, not a leaf or native-only host");
+  if (process.argv[2] === "--odw-job-supervisor") {
+    await superviseBackground(process.argv[3], fileURLToPath(import.meta.url));
+  } else {
+    await executeBackground(process.argv[3], runWorkflowTool);
   }
-});
-process.stdin.on("end", () => {
-  for (const controller of activeCalls.values()) controller.abort();
-  if (buffer.length) handleRaw(buffer.toString("utf8"));
-});
-process.stderr.write(
-  `[odw] MCP server ready (workers: cursor,zcode,grok,antigravity,copilot; legacy explicit: claude,codex${HOST ? `; host=${HOST}` : ""}${DEFAULT_EXECUTOR ? `; default-executor=${DEFAULT_EXECUTOR}` : ""}${NATIVE_ADVICE ? "; native-only guidance" : ""})
+} else {
+  let buffer = Buffer.alloc(0);
+  process.stdin.on("data", (chunk) => {
+    buffer = Buffer.concat([buffer, chunk]);
+    while (true) {
+      const headerEnd = buffer.indexOf("\r\n\r\n");
+      if (headerEnd === -1) {
+        const asText = buffer.toString("utf8");
+        if (asText.includes("\n") && asText.trimStart().startsWith("{")) {
+          responseFraming = "line";
+          const lines = asText.split(/\r?\n/);
+          buffer = Buffer.from(lines.pop() || "", "utf8");
+          for (const line of lines) handleRaw(line);
+        }
+        break;
+      }
+      const header = buffer.slice(0, headerEnd).toString("utf8");
+      const match = /Content-Length:\s*(\d+)/i.exec(header);
+      if (!match) {
+        buffer = buffer.slice(headerEnd + 4);
+        continue;
+      }
+      const length = Number(match[1]);
+      const bodyStart = headerEnd + 4;
+      const bodyEnd = bodyStart + length;
+      if (buffer.length < bodyEnd) break;
+      const body = buffer.slice(bodyStart, bodyEnd).toString("utf8");
+      buffer = buffer.slice(bodyEnd);
+      responseFraming = "content-length";
+      handleRaw(body);
+    }
+  });
+  process.stdin.on("end", () => {
+    for (const controller of activeCalls.values()) controller.abort();
+    if (buffer.length) handleRaw(buffer.toString("utf8"));
+  });
+  process.stderr.write(
+    `[odw] MCP server ready (workers: cursor,zcode,grok,antigravity,copilot; legacy explicit: claude,codex${HOST ? `; host=${HOST}` : ""}${DEFAULT_EXECUTOR ? `; default-executor=${DEFAULT_EXECUTOR}` : ""}${NATIVE_ADVICE ? "; native-only guidance" : ""})
 `
-);
+  );
+}
