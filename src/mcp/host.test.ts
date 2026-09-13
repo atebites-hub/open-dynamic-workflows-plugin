@@ -214,7 +214,7 @@ finish();
       await request(1, "initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "host-test", version: "0" } });
       const listed = await request(2, "tools/list");
       const nativeOnly = host === "claude" || host === "codex";
-      assert.equal(listed.result.tools.length, nativeOnly ? 0 : 1, `${host} advertised the wrong tools`);
+      assert.equal(listed.result.tools.length, nativeOnly ? 0 : host === "grok-bot" ? 3 : 1, `${host} advertised the wrong tools`);
       if (host === "grok-bot") {
         for (const [id, cwd] of [[4, undefined], [5, "relative/path"]] as const) {
           const rejected = await request(id, "tools/call", {
@@ -243,7 +243,17 @@ finish();
         assert.equal(await launchCount(), launchesBefore, "invalid host launched a subprocess");
       } else {
         assert.equal(call.result.isError, false, `${host} startup call failed`);
-        const summary = JSON.parse(call.result.content[0].text);
+        let summary = JSON.parse(call.result.content[0].text);
+        if (host === "grok-bot") {
+          for (let poll = 0; !summary.terminal && poll < 20; poll++) {
+            const status = await request(100 + poll, "tools/call", {
+              name: "workflow_status", arguments: { cwd: directory, jobId: summary.jobId, waitSeconds: 1 },
+            });
+            summary = JSON.parse(status.result.content[0].text);
+          }
+          assert.equal(summary.state, "completed", JSON.stringify(summary));
+          summary = summary.result;
+        }
         assert.equal(summary.value, "HOST_OK", `${host} selected the wrong executor`);
         assert.deepEqual(summary.executionContext, { host, defaultExecutor: kind });
         assert.equal(await launchCount(), launchesBefore + 1, `${host} did not launch its native executor`);

@@ -59,7 +59,15 @@ try {
     script: "export const meta={name:'two-writers',description:'packaged isolation'}; return await parallel([()=>agent('one',{retries:0}),()=>agent('two',{retries:0})]);",
   } });
   assert.equal(reply.result.isError, false);
-  const result = JSON.parse(reply.result.content[0].text);
+  let result = JSON.parse(reply.result.content[0].text);
+  if (host === 'grok-bot') {
+    for (let poll = 0; !result.terminal && poll < 20; poll++) {
+      const status = await request(10 + poll, 'tools/call', { name: 'workflow_status', arguments: { cwd: repo, jobId: result.jobId, waitSeconds: 1 } });
+      result = JSON.parse(status.result.content[0].text);
+    }
+    assert.equal(result.state, 'completed', JSON.stringify(result));
+    result = result.result;
+  }
   assert.deepEqual(result.executionContext, { host, defaultExecutor: kind });
   assert.equal(result.failedAgents, 0);
   assert.equal(result.durable, true);

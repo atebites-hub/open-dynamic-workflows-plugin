@@ -31,18 +31,20 @@ import {
   runWorkflow,
   zcodeExecutor,
 } from "../../open-dynamic-workflows/dist/index.js";
-import type { RoutingPolicy, WorkflowResult } from "../../open-dynamic-workflows/dist/index.js";
+import type { ExecOptions, Executor, RoutingPolicy, WorkflowResult } from "../../open-dynamic-workflows/dist/index.js";
 import { realpath } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultExecutorForHost, detectHost, nativeOrchestrationAdvice } from "./host.js";
+import { cancelBackground, executeBackground, startBackground, statusBackground, superviseBackground } from "./background.js";
+import type { ToolResult, WorkflowInput } from "./background.js";
 
 const SERVER_INFO = {
   name: "open-dynamic-workflows",
-  version: "0.4.1",
+  version: "0.4.2",
 };
 
-const EXECUTORS = {
+const RAW_EXECUTORS = {
   antigravity: antigravityExecutor,
   copilot: copilotExecutor,
   cursor: cursorExecutor,
@@ -51,11 +53,17 @@ const EXECUTORS = {
   claude: claudeExecutor,
   codex: codexExecutor,
 };
+const EXECUTORS: Record<string, Executor> = process.argv[2] === "--odw-job-execute"
+  ? Object.fromEntries(Object.entries(RAW_EXECUTORS).map(([name, execute]) => [
+      name, (opts: ExecOptions) => execute({ ...opts, processGroup: "inherit" }),
+    ]))
+  : RAW_EXECUTORS;
 const SANDBOX_META_KEY = "codex/sandbox-state-meta";
 const HOST = detectHost();
 const DEFAULT_EXECUTOR = defaultExecutorForHost();
 const NATIVE_ADVICE = nativeOrchestrationAdvice(HOST);
 const NESTED_LEAF = process.env.ODW_LEAF === "1" || process.env.ODW_GROK_LEAF === "1" || process.env.ODW_CURSOR_LEAF === "1";
+const BACKGROUND_HOST = HOST === "grok-bot" && !NATIVE_ADVICE && !NESTED_LEAF;
 
 // The tool's `description` IS the authoring contract — the model reads it to learn how
 // to write a workflow script. Keep it aligned with skills/open-dynamic-workflows/SKILL.md.
@@ -64,6 +72,13 @@ const NESTED_LEAF = process.env.ODW_LEAF === "1" || process.env.ODW_GROK_LEAF ==
 const WORKFLOW_TOOL = {
   name: "workflow",
   description: [
+    ...(HOST === "grok-bot" ? [
+      "GROK BOT: this call STARTS a background job and returns a jobId promptly, not a completed result.",
+      "Poll workflow_status with the same cwd/jobId (waitSeconds <= 20). Require state=completed and ok=true.",
+      "Use workflow_cancel for explicit cancellation. A closed/expired MCP request does not cancel an accepted job.",
+      "Pass a stable requestId when retrying submission; matching inputs return the same job, never another run.",
+      "maxSeconds bounds execution (default 1800, maximum 28800), plus at most 5 seconds cleanup grace.",
+    ] : []),
     "Execute a dynamic workflow script across Cursor, Grok Build, ZCode, Antigravity, and Copilot workers.",
     "A dynamic workflow is plain JavaScript (NOT TypeScript) that orchestrates subagents at scale:",
     "the model writes the script, this tool runs it.",
@@ -161,11 +176,32 @@ const WORKFLOW_TOOL = {
           reasoningEffort: { type: "string", minLength: 1 },
         },
       },
+      ...(HOST === "grok-bot" ? {
+        requestId: { type: "string", minLength: 1, maxLength: 128, description: "Stable unique submission key; reuse only for an identical start retry." },
+        maxSeconds: { type: "integer", minimum: 1, maximum: 28800, default: 1800, description: "Background execution deadline in seconds, independent of MCP request timeouts." },
+      } : {}),
     },
   },
 };
 
-const TOOLS = NESTED_LEAF || NATIVE_ADVICE ? [] : [WORKFLOW_TOOL];
+const JOB_PROPERTIES = {
+  cwd: { type: "string", minLength: 1, description: "The same absolute VM project directory supplied to workflow." },
+  jobId: { type: "string", minLength: 1, description: "Opaque jobId returned by workflow; not the nested core runId." },
+};
+const TOOLS = NESTED_LEAF || NATIVE_ADVICE ? [] : [WORKFLOW_TOOL, ...(BACKGROUND_HOST ? [
+  {
+    name: "workflow_status",
+    description: "Read a Grok Bot background job. Poll until terminal; only state=completed with ok=true is success. Failed, cancelled, timed_out and interrupted jobs are not passes. Results and available receipts remain on disk; this tool never restarts work.",
+    inputSchema: { type: "object", required: ["cwd", "jobId"], additionalProperties: false, properties: {
+      ...JOB_PROPERTIES, waitSeconds: { type: "integer", minimum: 0, maximum: 20, default: 10 },
+    } },
+  },
+  {
+    name: "workflow_cancel",
+    description: "Explicitly cancel a Grok Bot background job and its owned worker process group. Idempotent; poll workflow_status for the final cancellation receipt. Partial files and logs are retained.",
+    inputSchema: { type: "object", required: ["cwd", "jobId"], additionalProperties: false, properties: JOB_PROPERTIES },
+  },
+] : [])];
 const activeCalls = new Map<number | string, AbortController>();
 let responseFraming: "content-length" | "line" = "content-length";
 
@@ -203,19 +239,15 @@ function fail(id: number | string | null, code: number, message: string): void {
 // 从工具调用参数运行一个 workflow。resolve 为 MCP 工具调用结果（{content, isError}）。
 // 绝不抛错——失败落到 isError + text，让模型可据此反应。进度流到 stderr（server 诊断），
 // 因为 v1 是同步的，只在完成时返回。
-async function runWorkflowTool(
-  args: {
-    cwd?: unknown;
-    script?: unknown;
-    scriptPath?: unknown;
-    args?: unknown;
-    resumeFromRunId?: unknown;
-    routingPolicy?: unknown;
-    isolation?: unknown;
-  },
-  signal?: AbortSignal,
+type PreparedInput = {
+  cwd: string; script?: string; scriptPath?: string; args?: unknown;
+  resumeFromRunId?: string; routingPolicy?: unknown; isolation?: "worktree";
+};
+
+async function prepareWorkflow(
+  args: WorkflowInput,
   sandboxCwd?: unknown,
-): Promise<{ content: Array<{ type: "text"; text: string }>; isError: boolean }> {
+): Promise<{ input: PreparedInput } | ToolResult> {
   if (NATIVE_ADVICE) {
     return { content: [{ type: "text", text: NATIVE_ADVICE }], isError: true };
   }
@@ -332,6 +364,27 @@ async function runWorkflowTool(
     process.env.CLAUDE_PROJECT_DIR ||
     process.cwd();
 
+  return { input: {
+    cwd,
+    ...(script !== undefined ? { script } : {}),
+    ...(scriptPath !== undefined ? { scriptPath } : {}),
+    ...(workflowArgs !== undefined ? { args: workflowArgs } : {}),
+    ...(resumeFromRunId !== undefined ? { resumeFromRunId } : {}),
+    ...(routingPolicy !== undefined ? { routingPolicy } : {}),
+    ...(isolation !== undefined ? { isolation } : {}),
+  } };
+}
+
+async function runWorkflowTool(
+  args: WorkflowInput,
+  signal?: AbortSignal,
+  sandboxCwd?: unknown,
+  onEvent?: (event: unknown) => void,
+): Promise<ToolResult> {
+  const prepared = await prepareWorkflow(args, sandboxCwd);
+  if ("isError" in prepared) return prepared;
+  const { cwd, script, scriptPath, args: workflowArgs, resumeFromRunId, routingPolicy, isolation } = prepared.input;
+
   let result: WorkflowResult;
   try {
     result = await runWorkflow({
@@ -351,6 +404,7 @@ async function runWorkflowTool(
         // 把单行进度流到 stderr，避免长 run 变得不可见。MCP 协议在 stdout 承载最终结果；
         // stderr 是 server 诊断。
         process.stderr.write(`[odw] ${event.type}\n`);
+        onEvent?.(event);
       },
     });
   } catch (err) {
@@ -470,7 +524,7 @@ function handleRequest(msg: unknown): void {
       };
       const name = toolParams.name;
       const callArgs = toolParams.arguments ?? {};
-      if (name !== "workflow") {
+      if (name !== "workflow" && !(BACKGROUND_HOST && (name === "workflow_status" || name === "workflow_cancel"))) {
         fail(id, -32601, `Unknown tool: ${name}`);
         return;
       }
@@ -487,7 +541,17 @@ function handleRequest(msg: unknown): void {
         typeof sandboxState === "object" && sandboxState !== null && "sandboxCwd" in sandboxState
           ? (sandboxState as { sandboxCwd?: unknown }).sandboxCwd
           : undefined;
-      void runWorkflowTool(callArgs, controller.signal, sandboxCwd)
+      const executeCall = async (): Promise<ToolResult> => {
+        if (!BACKGROUND_HOST) return runWorkflowTool(callArgs, controller.signal, sandboxCwd);
+        if (name === "workflow_status") return statusBackground(callArgs as Record<string, unknown>, controller.signal);
+        if (name === "workflow_cancel") return cancelBackground(callArgs as Record<string, unknown>);
+        const prepared = await prepareWorkflow(callArgs, sandboxCwd);
+        if ("isError" in prepared) return prepared;
+        const controls = callArgs as Record<string, unknown>;
+        return startBackground({ ...prepared.input, requestId: controls.requestId, maxSeconds: controls.maxSeconds },
+          fileURLToPath(import.meta.url), controller.signal, sandboxCwd);
+      };
+      void executeCall()
         .then((toolResult) => ok(id, toolResult))
         .catch((err) => {
           const message = err instanceof Error ? err.message : String(err);
@@ -528,6 +592,14 @@ function handleRaw(raw: string): void {
 
 // Support both Content-Length framed streams and newline-delimited JSON.
 // 同时支持 Content-Length 分帧流和换行分隔的 JSON。
+if (process.argv[2] === "--odw-job-supervisor" || process.argv[2] === "--odw-job-execute") {
+  if (!BACKGROUND_HOST) throw new Error("Background runtime modes require the Grok Bot host, not a leaf or native-only host");
+  if (process.argv[2] === "--odw-job-supervisor") {
+    await superviseBackground(process.argv[3], fileURLToPath(import.meta.url));
+  } else {
+    await executeBackground(process.argv[3], runWorkflowTool);
+  }
+} else {
 let buffer = Buffer.alloc(0);
 
 process.stdin.on("data", (chunk: Buffer) => {
@@ -571,3 +643,4 @@ process.stdin.on("end", () => {
 process.stderr.write(
   `[odw] MCP server ready (workers: cursor,zcode,grok,antigravity,copilot; legacy explicit: claude,codex${HOST ? `; host=${HOST}` : ""}${DEFAULT_EXECUTOR ? `; default-executor=${DEFAULT_EXECUTOR}` : ""}${NATIVE_ADVICE ? "; native-only guidance" : ""})\n`,
 );
+}

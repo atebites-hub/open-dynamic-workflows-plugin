@@ -261,12 +261,13 @@ Without `routingPolicy`, existing host defaults remain unchanged: omitted execut
 Cursor, Grok, Claude, Codex, or ZCode from the host launch environment. An explicit executor
 still overrides that host default.
 
-## Notes / scope (v0.4.1)
+## Notes / scope (v0.4.2)
 
 - **Host-native default worker.** Omitted `executor` uses cursor on Cursor and Grok Bot, grok on Grok Build,
   zcode on ZCode, codex on Codex, claude on Claude Code. Name another worker to override.
-- **Synchronous tool.** `workflow()` runs to completion and returns (v1). Background execution
-  with task notifications is a v2 enhancement.
+- **Host-specific lifecycle.** Grok Bot `workflow()` returns a durable background
+  job handle; poll `workflow_status` and use `workflow_cancel` to stop it. Other
+  hosts keep their synchronous `workflow()` behavior.
 - **Local evidence.** `.odw/` artifacts contain workflow scripts, prompts, and agent responses;
   newly written run files are owner-only. Keep `.odw/` gitignored.
 - **No ultracode auto-decide.** ODW does not auto-inject a workflow the way Claude ultracode
@@ -316,7 +317,8 @@ host's supported MCP mechanism. If that mechanism is unavailable, report an
 installation gap rather than calling an alternate host a Grok Bot pass.
 
 Every Grok Bot workflow call must supply its absolute VM project `cwd`.
-Use `isolation: 'worktree'` for parallel writers. Inspect the returned
+Use `isolation: 'worktree'` for parallel writers. Poll the returned `jobId` with
+`workflow_status`; accepted/queued is not success. Inspect the final result's
 `executionContext` (configured host/default executor only), per-agent traces
 (actual executor), and retained branch/diff receipts. Never infer preserved
 files from a resumed chat ID, or runtime/model attestation from a host label.
@@ -325,3 +327,35 @@ files from a resumed chat ID, or runtime/model attestation from a host label.
 installer idempotence, and two retained writer worktrees through the packaged
 server. The model CLIs in those tests are fixtures; live VM qualification is
 still a separate requirement.
+
+### Grok Bot background jobs (0.4.2)
+
+The host's short MCP deadline must not own a long workflow. `workflow` now
+accepts a job promptly on Grok Bot, while a detached supervisor runs the same
+ODW engine. `workflow_status({cwd, jobId, waitSeconds: 10})` waits at most 20
+seconds per call; poll until terminal. Only `state: "completed", ok: true`
+means success: all nodes must succeed and the journal must be durable.
+
+Pass a stable optional `requestId` for idempotent start retries. Identical
+snapshotted inputs return the same job; changed inputs under that key are
+rejected. This is not agent-cache replay. `scriptPath` is snapshotted at start
+and resolves relative to the supplied project cwd. The core `runId` becomes
+available after execution starts and is distinct from the control `jobId`.
+
+Jobs survive an MCP request ending or the MCP server process disconnecting.
+Use `workflow_cancel({cwd, jobId})` for explicit cancellation. `maxSeconds`
+bounds the whole job: default 1800, range 1-28800, plus up to 5 seconds for
+cooperative abort/receipt flushing before the supervisor kills its owned
+runtime process group. Cancellation retains partial CLI traces and worktrees.
+No PID supplied by a client is ever signalled. Unknown/cross-project handles
+fail; a dead supervisor without a terminal receipt is interrupted, never a pass.
+
+Private job input, status, result and runner logs live in `.odw/.jobs/`.
+Gitignore that directory as well as workflow run artifacts: they can contain
+prompts/results. No credentials or environment snapshot are written by the
+job controller. This is POSIX process supervision, not a security sandbox,
+VM-restart recovery, or strict Advisor attestation. A lost VM cannot be made
+durable by this adapter; preserve/inspect its evidence before a fresh run.
+
+Run `npm run verify:long` for a packaged >60-second process/worktree fixture.
+It uses fake model CLIs; a real Grok Bot run is a separate release acceptance.
