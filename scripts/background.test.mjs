@@ -66,11 +66,12 @@ const cfg=JSON.parse(process.argv.at(-1));
 fs.appendFileSync(${JSON.stringify(launches)},JSON.stringify({pid:process.pid,cwd:process.cwd()})+'\\n');
 console.log(JSON.stringify({type:'system',subtype:'init',session_id:'fixture-'+process.pid,model:'fixture'}));
 fs.writeFileSync('shared.txt',cfg.marker+'\\n');
-if(cfg.pidFile){const nested=cp.spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});fs.writeFileSync(cfg.pidFile,JSON.stringify({pid:process.pid,nested:nested.pid}));}
+if(cfg.pidFile){const nested=cp.spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',detached:!!cfg.detached});fs.writeFileSync(cfg.pidFile,JSON.stringify({pid:process.pid,nested:nested.pid}));}
 setTimeout(()=>{console.log(JSON.stringify({type:'result',subtype:cfg.fail?'error_during_execution':'success',is_error:!!cfg.fail,result:cfg.marker,session_id:'fixture-'+process.pid}));process.exit(cfg.fail?1:0);},cfg.delay);
 `);
   chmodSync(fake, 0o755);
   let mcp = client(repo, fake);
+  const control = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { cwd: repo, stdio: 'ignore', detached: true });
   const jobs = [];
   const unpack = reply => JSON.parse(reply.result.content[0].text);
   const status = async jobId => unpack(await mcp.call('workflow_status', { cwd: repo, jobId, waitSeconds: 1 }));
@@ -121,14 +122,17 @@ setTimeout(()=>{console.log(JSON.stringify({type:'result',subtype:cfg.fail?'erro
     assert.equal(failure.state, 'failed'); assert.equal(failure.ok, false);
     assert.equal(failure.result.failedAgents, 1, 'script completion must not hide failed nodes');
 
-    const pidFile = join(root, 'pids');
-    const cancelled = await start({ script: script('cancelled', [{ marker: 'partial', delay: 60000, pidFile }]) });
+    for (const detached of process.platform === 'linux' ? [false, true] : [false]) {
+    const name = detached ? 'cancelled-detached' : 'cancelled';
+    const pidFile = join(root, name + '-pids');
+    const cancelled = await start({ script: script(name, [{ marker: 'partial', delay: 60000, pidFile, detached }]) });
     await waitUntil(() => existsSync(pidFile));
     await mcp.call('workflow_cancel', { cwd: repo, jobId: cancelled.jobId });
     const cancellation = await finish(cancelled.jobId);
     assert.equal(cancellation.state, 'cancelled'); assert.equal(cancellation.ok, false);
     assert.equal(unpack(await mcp.call('workflow_cancel', { cwd: repo, jobId: cancelled.jobId })).state, 'cancelled');
-    const tracePath = join(repo, '.odw', 'cancelled', 'runs', cancellation.runId, 'agents', 'agent-1.jsonl');
+    assert.equal(cancellation.cleanup.complete, true);
+    const tracePath = join(repo, '.odw', name, 'runs', cancellation.runId, 'agents', 'agent-1.jsonl');
     const trace = JSON.parse(readFileSync(tracePath, 'utf8'));
     assert.equal(trace.isError, true); assert.equal(trace.exitCode, null);
     assert.ok(trace.events.some(event => event.session_id));
@@ -137,6 +141,29 @@ setTimeout(()=>{console.log(JSON.stringify({type:'result',subtype:cfg.fail?'erro
       try { return /Z/.test(execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' })); }
       catch { return true; }
     }));
+    assert.equal(process.kill(control.pid, 0), true, 'unrelated same-cwd process must survive');
+    }
+
+    // Linux: also sweep children orphaned by a normal CLI exit, failure, or deadline.
+    if (process.platform === 'linux') for (const state of ['completed', 'failed', 'timed_out']) {
+      const pidFile = join(root, state + '-pids');
+      const job = await start({ maxSeconds: 2, script: script('escaped-' + state, [{
+        marker: state, delay: state === 'timed_out' ? 60000 : 100,
+        fail: state === 'failed', pidFile, detached: true,
+      }]) });
+      const result = await finish(job.jobId);
+      assert.equal(result.state, state, JSON.stringify(result));
+      assert.equal(result.cleanup.complete, true);
+      assert.equal(result.cleanup.method, 'process-group-and-linux-job-marker');
+      const pids = JSON.parse(readFileSync(pidFile, 'utf8'));
+      for (const pid of Object.values(pids)) {
+        let active = false;
+        try { active = !/\) [ZX] /.test(readFileSync(`/proc/${pid}/stat`, 'utf8')); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+        assert.equal(active, false, `${state} published before process ${pid} stopped`);
+      }
+      assert.equal(process.kill(control.pid, 0), true);
+    }
 
     const timed = await start({ maxSeconds: 1, script: "export const meta={name:'deadline',description:'CPU-bound script'}; while(true){}" });
     const timeout = await finish(timed.jobId, 12000);
@@ -149,6 +176,7 @@ setTimeout(()=>{console.log(JSON.stringify({type:'result',subtype:cfg.fail?'erro
       try { await mcp.call('workflow_cancel', { cwd: repo, jobId }); await finish(jobId); } catch { /* preserve failure output */ }
     }
     mcp.close();
+    control.kill('SIGKILL');
     rmSync(root, { recursive: true, force: true });
   }
 });

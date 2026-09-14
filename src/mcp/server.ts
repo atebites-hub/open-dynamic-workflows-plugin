@@ -41,7 +41,7 @@ import type { ToolResult, WorkflowInput } from "./background.js";
 
 const SERVER_INFO = {
   name: "open-dynamic-workflows",
-  version: "0.4.2",
+  version: "0.4.3",
 };
 
 const RAW_EXECUTORS = {
@@ -198,7 +198,7 @@ const TOOLS = NESTED_LEAF || NATIVE_ADVICE ? [] : [WORKFLOW_TOOL, ...(BACKGROUND
   },
   {
     name: "workflow_cancel",
-    description: "Explicitly cancel a Grok Bot background job and its owned worker process group. Idempotent; poll workflow_status for the final cancellation receipt. Partial files and logs are retained.",
+    description: "Explicitly cancel a Grok Bot background job, its owned process group and job-marked detached Linux Shell sessions. Idempotent; poll workflow_status for the final receipt and cleanup.complete. Partial files and logs are retained.",
     inputSchema: { type: "object", required: ["cwd", "jobId"], additionalProperties: false, properties: JOB_PROPERTIES },
   },
 ] : [])];

@@ -261,7 +261,7 @@ Without `routingPolicy`, existing host defaults remain unchanged: omitted execut
 Cursor, Grok, Claude, Codex, or ZCode from the host launch environment. An explicit executor
 still overrides that host default.
 
-## Notes / scope (v0.4.2)
+## Notes / scope (v0.4.3)
 
 - **Host-native default worker.** Omitted `executor` uses cursor on Cursor and Grok Bot, grok on Grok Build,
   zcode on ZCode, codex on Codex, claude on Claude Code. Name another worker to override.
@@ -347,6 +347,11 @@ Use `workflow_cancel({cwd, jobId})` for explicit cancellation. `maxSeconds`
 bounds the whole job: default 1800, range 1-28800, plus up to 5 seconds for
 cooperative abort/receipt flushing before the supervisor kills its owned
 runtime process group. Cancellation retains partial CLI traces and worktrees.
+On Linux, 0.4.3 also stops job-marked Cursor Shell sessions that detached from
+that group. Status exposes `cleanup.method` and `cleanup.complete`; terminal
+receipts are written after cleanup. Cleanup failure is `interrupted`, never a
+successful run. Non-Linux hosts retain process-group-only cleanup. The marker is
+lifecycle ownership, not a security sandbox or protection against hostile workers.
 No PID supplied by a client is ever signalled. Unknown/cross-project handles
 fail; a dead supervisor without a terminal receipt is interrupted, never a pass.
 

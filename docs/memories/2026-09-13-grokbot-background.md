@@ -43,3 +43,41 @@ Issue: https://github.com/atebites-hub/open-dynamic-workflows-plugin/issues/24
 - Core PR #14 merged as cd5c3323579ba0f6393c0f545fddc249b5c95219.
 - Rebuilt and reran the complete plugin verification against that published pin:
   all checks passed. Native Grok Bot acceptance remains pending.
+
+## Native acceptance, not complete
+
+- Plugin PR #25 merged as 2f487dc1abe06189f8a88987b0e5981e7540fd5f;
+  verified published bundle SHA256 is
+  598186591a37acd064ac2cfaf634cf6e30d53dadef5a765f7529f5d1b979a3a7.
+- Installed through native Grok Bot connector replacement. The real long run
+  run-mu00m9w4-f606c9 passed at 247685 ms with two complete CLI exits, separate
+  retained worktrees, exact edits, unchanged parent and durable results.
+- Cancellation run run-mu00xvrh-bf068b reached cancelled in 817 ms and retained
+  its partial trace, but the host-managed shell and sleep remained alive.
+  This is a blocking FAIL. Both exited naturally before cleanup; no kill was
+  needed. PPID 23/sand-exit-watch was observed; PGID/SID were not recorded.
+- Issue #24 remains open. Requested user approval to fix this newly exposed
+  cleanup gap; status stays in_progress. No full-ready or strict Advisor claim.
+
+## Approved cleanup repair, 2026-09-14
+
+- Jay explicitly approved the cleanup fix and PR merges. Scope remains inline;
+  Plan: docs/plans/2026-09-14-grokbot-cleanup.md. Status: in_progress.
+- Native CLI 2026.09.10-fd3934a reproduces it: CLI PGID/SID 2898694,
+  shell PGID/SID 2898969, sleep shares the shell group. A fresh harmless marker
+  reached all three. SIGKILL of the CLI group left shell and sleep running.
+- SIGINT-only comparison also left shell/sleep alive after five seconds. All
+  diagnostic processes were selectively cleaned; sand-exit-watch was untouched.
+- Fix belongs to the supervisor's shared terminal path, with a bounded Linux
+  job-marker sweep and identity recheck. No credential or model changes. A
+  terminal success cannot precede cleanup; tests include unrelated-process safety.
+
+## Cleanup regression results
+
+- The unchanged 0.4.2 bundle fails the detached-child process-death assertion on
+  Linux. The 0.4.3 bundle passes it, plus normal exit, failed exit, timeout and
+  same-cwd unrelated-control survival. A fresh container supplies git/procps only
+  for test fixtures; they are not new plugin runtime dependencies.
+- Complete plugin verification passes: build/typecheck, host and installer tests,
+  50 smoke checks, three packaged worktree fixtures and the background lifecycle.
+- No native 0.4.3 acceptance claim yet. Issue #24 remains open pending live rerun.

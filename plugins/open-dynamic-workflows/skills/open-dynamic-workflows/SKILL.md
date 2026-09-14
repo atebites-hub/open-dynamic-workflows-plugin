@@ -46,6 +46,10 @@ identical snapshotted inputs reuse a job. This does not replay agent calls.
 `maxSeconds` sets the job deadline (default 1800, range 1-28800), plus at most
 5 seconds cleanup grace. `workflow_cancel({cwd,jobId})` explicitly stops a job;
 closing or cancelling a completed start/status request does not stop workers.
+On Linux, detached Cursor Shell sessions are also stopped using a unique inherited
+job marker. Check `cleanup.complete` in the terminal receipt; cleanup failure is
+`interrupted` and not a pass. Other POSIX hosts retain process-group-only cleanup.
+The marker is lifecycle ownership, not a security sandbox against hostile workers.
 
 Always pass the same absolute VM cwd. Preserve `.odw/.jobs/` and run receipts;
 gitignore them because they may contain prompts/results. Cancelled, timed_out,

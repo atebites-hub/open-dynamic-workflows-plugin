@@ -1,6 +1,6 @@
 {
   "name": "open-dynamic-workflows-plugin",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "private": true,
   "description": "Dynamic workflow orchestration for Cursor, Grok Build, Claude Code, Codex, and ZCode. Dev dependencies only; the shipped dist/mcp/server.js is self-contained.",
   "license": "MIT",
