@@ -48,7 +48,10 @@ function markedProcess(pid: number, token: string): string | undefined {
     const environment = readFileSync(`/proc/${pid}/environ`, "utf8");
     if (environment.split("\0").includes(`${PROCESS_MARKER}=${token}`)) return fields[19];
   } catch (error) {
-    if (!["ENOENT", "ESRCH"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+    // Protected entries are not proven job-owned. Never signal them, and do not
+    // make an unrelated process's visibility a prerequisite for job completion.
+    // Signal failures for positively marked processes still fail closed below.
+    if (!["ENOENT", "ESRCH", "EACCES", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
   }
 }
 

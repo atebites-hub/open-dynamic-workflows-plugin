@@ -116,7 +116,7 @@ test("the shared ODW leaf marker suppresses nested workflow tools", async () => 
   }
 });
 
-test("each supported host starts the MCP server and launches its native executor", async () => {
+test("each supported host starts the MCP server and launches its native executor", { timeout: 60_000 }, async (t) => {
   const root = resolve(import.meta.dirname, "../..");
   const server = join(root, "dist", "mcp", "server.js");
   const directory = await mkdtemp(join(tmpdir(), "odw-host-startup-"));
@@ -189,6 +189,7 @@ finish();
         },
         stdio: ["pipe", "pipe", "pipe"],
       });
+      t.after(() => { child.kill("SIGKILL"); });
       let output = "";
       child.stdout.setEncoding("utf8");
       child.stdout.on("data", (chunk) => { output += chunk; });

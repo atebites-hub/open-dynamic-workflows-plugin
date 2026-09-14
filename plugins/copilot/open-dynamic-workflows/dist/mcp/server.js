@@ -9420,7 +9420,7 @@ function markedProcess(pid, token) {
     const environment = readFileSync(`/proc/${pid}/environ`, "utf8");
     if (environment.split("\0").includes(`${PROCESS_MARKER}=${token}`)) return fields[19];
   } catch (error) {
-    if (!["ENOENT", "ESRCH"].includes(error.code ?? "")) throw error;
+    if (!["ENOENT", "ESRCH", "EACCES", "EPERM"].includes(error.code ?? "")) throw error;
   }
 }
 async function cleanupMarkedProcesses(token) {

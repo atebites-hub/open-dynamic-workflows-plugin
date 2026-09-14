@@ -81,3 +81,27 @@ Issue: https://github.com/atebites-hub/open-dynamic-workflows-plugin/issues/24
 - Complete plugin verification passes: build/typecheck, host and installer tests,
   50 smoke checks, three packaged worktree fixtures and the background lifecycle.
 - No native 0.4.3 acceptance claim yet. Issue #24 remains open pending live rerun.
+
+## Merge hold, 2026-09-14
+
+- Cleanup PR #26, head 35d2a0e3f91f9373fb1d7938870cb134045ce38d, is NOT merged.
+- CI run 34861352417 failed the multi-host startup test and then hung on open
+  handles; the run was cancelled. The same suite passed in a fresh Linux
+  container as UID 1001. The CI-only difference is not yet diagnosed.
+- Bot prewarm verified version 0.4.3 and bundle SHA256
+  5f67525e2745f4f3da51824b1eaf40f2058f8b0c7227af92b41df383378b1175.
+  Its active connector remains 0.4.2; no native 0.4.3 rerun has occurred.
+- Disclosed the new regression and asked Jay whether to fix it before further
+  source changes. Status stays in_progress; issue #24 remains open.
+
+## Approved CI regression repair
+
+- Jay requested fixing the regression and merging #26. Scope remains inline.
+- The real cleanup helper fails a controlled protected-process fixture with
+  EACCES before it reaches the owned worker. Per-process access denials now leave
+  the unclassified process untouched instead of failing unrelated job startup.
+- Confirmed owned-process signal denial and /proc enumeration failure remain
+  blocking. Three focused checks cover these distinctions. Host-test subprocess
+  teardown is unconditional and bounded so future assertion failures report fully.
+- Complete local verification passes after the repair. Current-head CI and merge
+  remain required; this is not native Bot acceptance or strict Advisor evidence.

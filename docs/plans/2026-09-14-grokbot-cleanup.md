@@ -23,3 +23,12 @@ Scope: inline; approved by Jay on 2026-09-14. No model, auth or security overrid
 Limits: inherited markers are lifecycle ownership, not a security sandbox. A
 malicious process can scrub its environment; marker scans are not kernel cgroups
 or atomic pidfd signalling. No broader isolation or all-harness PASS is claimed.
+
+## Approved CI regression repair
+
+Jay requested fixing the startup regression and merging #26. Reproduce a protected
+same-user /proc entry with the real helper, then ignore only per-process access
+denials before ownership is established. Keep /proc enumeration and confirmed
+owned-process signal failures blocking. Add bounded, unconditional subprocess
+teardown to the host test so assertion failures cannot hide CI diagnostics.
+Run the complete gate and require current-head CI success before merging.
