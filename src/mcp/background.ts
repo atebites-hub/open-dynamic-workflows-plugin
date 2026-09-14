@@ -2,8 +2,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
-  closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync,
-  renameSync, rmSync, writeFileSync,
+  closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync,
+  renameSync, rmSync, statSync, writeFileSync,
 } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 
@@ -22,6 +22,7 @@ interface Job {
   deadlineAt: string; inputHash: string; supervisorPid?: number; runId?: string;
   agentCount: number; finishedAgents: number; failedAgents: number;
   result?: Record<string, unknown>; error?: string;
+  cleanup?: { method: string; complete: boolean; error?: string };
 }
 interface Request {
   workflow: WorkflowInput; sandboxCwd?: unknown;
@@ -30,9 +31,52 @@ type Execute = (input: WorkflowInput, signal: AbortSignal, sandboxCwd: unknown, 
 const TERMINAL = new Set<State>(["completed", "failed", "cancelled", "timed_out", "interrupted"]);
 const JOB_ID = /^(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|req-[0-9a-f]{64})$/;
 const GRACE_MS = 5000;
+const PROCESS_MARKER = "ODW_JOB_PROCESS_TOKEN";
 const now = () => new Date().toISOString();
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const readJson = (file: string) => JSON.parse(readFileSync(file, "utf8"));
+
+// Cursor's Linux Shell tool creates a separate session. A process-group kill
+// alone cannot reach it after the CLI exits. Match a fresh, supervisor-owned
+// marker, never a cwd, command name, stored PID or client-supplied token.
+function markedProcess(pid: number, token: string): string | undefined {
+  try {
+    if (pid === process.pid || statSync(`/proc/${pid}`).uid !== process.getuid!()) return;
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const fields = stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\s+/);
+    if (fields[0] === "Z" || fields[0] === "X") return;
+    const environment = readFileSync(`/proc/${pid}/environ`, "utf8");
+    if (environment.split("\0").includes(`${PROCESS_MARKER}=${token}`)) return fields[19];
+  } catch (error) {
+    // Protected entries are not proven job-owned. Never signal them, and do not
+    // make an unrelated process's visibility a prerequisite for job completion.
+    // Signal failures for positively marked processes still fail closed below.
+    if (!["ENOENT", "ESRCH", "EACCES", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+  }
+}
+
+async function cleanupMarkedProcesses(token: string): Promise<NonNullable<Job["cleanup"]>> {
+  const method = process.platform === "linux" ? "process-group-and-linux-job-marker" : "process-group";
+  if (process.platform !== "linux") return { method, complete: true };
+  // ponytail: a bounded /proc sweep, not a process daemon or security sandbox.
+  // The marker survives reparenting; starttime and UID are rechecked before kill.
+  const deadline = Date.now() + GRACE_MS;
+  try {
+    while (true) {
+      const owned = readdirSync("/proc").filter(name => /^[1-9][0-9]*$/.test(name))
+        .map(name => ({ pid: Number(name), start: markedProcess(Number(name), token) }))
+        .filter(entry => entry.start !== undefined);
+      if (!owned.length) return { method, complete: true };
+      if (Date.now() >= deadline) throw new Error("Job-marked processes remain after cleanup deadline");
+      for (const { pid, start } of owned) {
+        if (markedProcess(pid, token) !== start) continue;
+        try { process.kill(pid, "SIGKILL"); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+      }
+      await new Promise(resolveWait => setTimeout(resolveWait, 25));
+    }
+  } catch (error) { return { method, complete: false, error: String(error) }; }
+}
 
 function atomicJson(file: string, value: unknown): void {
   const temporary = `${file}.${randomUUID()}.tmp`;
@@ -71,7 +115,7 @@ function readJob(cwd: unknown, jobId: unknown): Job {
       try { process.kill(job.supervisorPid, 0); }
       catch (error) { missing = (error as NodeJS.ErrnoException).code === "ESRCH"; }
     }
-    if (missing || Date.now() > Date.parse(job.deadlineAt) + GRACE_MS + 5000) {
+    if (missing || Date.now() > Date.parse(job.deadlineAt) + 2 * GRACE_MS + 5000) {
       return { ...job, state: "interrupted", error: "Job supervisor stopped without a terminal receipt; inspect retained artifacts. No automatic replay." };
     }
   }
@@ -187,6 +231,7 @@ export async function superviseBackground(directory: string, entrypoint: string)
   const job = readJson(stateFile) as Job;
   locate(request.workflow.cwd, job.jobId);
   job.supervisorPid = process.pid; job.state = "running";
+  const processToken = randomUUID();
   const persist = () => { job.updatedAt = now(); atomicJson(stateFile, job); };
   persist();
   await new Promise<void>((resolveDone) => {
@@ -198,7 +243,7 @@ export async function superviseBackground(directory: string, entrypoint: string)
     const killOwnedGroup = () => {
       if (!child?.pid) return;
       // This is a live ChildProcess owned by this supervisor, never a client-
-      // supplied or recovered PID. Every executor inherits this runtime group.
+      // supplied or recovered PID. Detached Shell sessions are cleaned below.
       try { process.kill(-child.pid, "SIGKILL"); }
       catch { try { child.kill("SIGKILL"); } catch { /* already stopped */ } }
     };
@@ -208,11 +253,20 @@ export async function superviseBackground(directory: string, entrypoint: string)
       if (tick) clearInterval(tick);
       if (grace) clearTimeout(grace);
       if (result) job.result = parseResult(result);
-      job.state = stopped ?? (job.result?.ok === true ? "completed" : "failed");
       if (error) job.error = error;
-      try { persist(); }
-      catch (failure) { console.error("[odw] terminal job receipt failed:", failure); }
-      finally { killOwnedGroup(); resolveDone(); }
+      killOwnedGroup();
+      void cleanupMarkedProcesses(processToken).then(cleanup => {
+        job.cleanup = cleanup;
+        job.state = cleanup.complete ? stopped ?? (job.result?.ok === true ? "completed" : "failed") : "interrupted";
+        if (!cleanup.complete) {
+          job.error = [job.error, cleanup.error].filter(Boolean).join("; ");
+          if (job.result) job.result.ok = false;
+        }
+        // A terminal receipt is published only after cleanup, not before it.
+        try { persist(); }
+        catch (failure) { console.error("[odw] terminal job receipt failed:", failure); }
+        finally { resolveDone(); }
+      });
     };
     const stop = (reason: State) => {
       if (finished || stopped) return;
@@ -227,7 +281,7 @@ export async function superviseBackground(directory: string, entrypoint: string)
     if (existsSync(join(directory, "cancel"))) { stop("cancelled"); return; }
     if (Date.now() >= Date.parse(job.deadlineAt)) { stop("timed_out"); return; }
     child = spawn(process.execPath, [entrypoint, "--odw-job-execute", directory], {
-      cwd: job.cwd, env: process.env, detached: true,
+      cwd: job.cwd, env: { ...process.env, [PROCESS_MARKER]: processToken }, detached: true,
       stdio: ["ignore", "inherit", "inherit", "ipc"],
     });
     child.on("message", (message: unknown) => {
