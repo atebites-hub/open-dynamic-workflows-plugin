@@ -17,8 +17,9 @@ Issue: https://github.com/atebites-hub/open-dynamic-workflows-plugin/issues/24
 - **Iteration**: Package/process fixtures first; actual >60-second VM run after release verification.
 
 ## Status
-- state: in_progress
+- state: completed
 - started: 2026-09-13
+- completed: 2026-09-14
 
 ## Lessons
 ### Key Challenges & Analysis
@@ -105,3 +106,21 @@ Issue: https://github.com/atebites-hub/open-dynamic-workflows-plugin/issues/24
   teardown is unconditional and bounded so future assertion failures report fully.
 - Complete local verification passes after the repair. Current-head CI and merge
   remain required; this is not native Bot acceptance or strict Advisor evidence.
+
+## Native acceptance completed
+
+- PR #26 merged as 1a42223c7709941a10599a72b6d03c59bbccca24 with passing CI.
+  The native Bot connector was upgraded to that exact checksum-verified 0.4.3
+  bundle, not the earlier same-version prewarm.
+- Cancellation run run-mu1ip8n8-38fab0 passed: CLI and detached shell/sleep gone,
+  no manual worker kills, unmarked same-worktree control survived, partial trace
+  retained and parent unchanged.
+- Long run run-mu1iu7lq-360323 passed in 97607 ms: two real Cursor workers, distinct
+  sessions/worktrees, exit zero, exact edits, no failed agents/workflows, durable
+  receipts and completed cleanup.
+- A host status-poll timeout did not stop the job. A read-only retry recovered
+  its result. The host error's claimed 840-second duration is not independently
+  measured; the reconciled report correctly records duration as unknown.
+- Evidence: docs/evidence/grokbot-043-native-acceptance-2026-09-14.md.
+  Scope remains these Grok Bot ODW fixtures, not all Factory harnesses/plugins
+  or strict Advisor. Issue #24 was already owner-closed before the live rerun.
