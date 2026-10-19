@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Compare (or apply) nested submodule pins against each atebites-hub remote's main.
-# Used by humans/agents and by .github/workflows/sync-nested-pins.yml.
+# Used by humans and agents (`npm run sync:nested-pins`, or check|apply below).
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

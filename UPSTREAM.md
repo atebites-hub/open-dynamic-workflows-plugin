@@ -59,13 +59,11 @@ Bump a nested pin only after **that fork** is ready, then let the marketplace co
 
 Plugin CI audits this repo’s lock as a required check, and still runs `npm --prefix open-dynamic-workflows audit --package-lock-only --audit-level high` against the **pinned** ODW lock as an informational step. That lock (and current ODW `main` as of this writing) still has `fast-uri@3.1.5` (`GHSA-5jgf-p345-68v8` and related). The fix belongs on the ODW fork. Do not edit the submodule tree here to silence it, and do not treat that advisory as a reason to bump the ODW pin in the same PR as a zcode-cli retarget. When the ODW fork ships a clean lock, bump the pin and make the nested audit required again.
 
-## Weekday sync
+## Syncing nested pins
 
-`.github/workflows/sync-nested-pins.yml` (UTC cron on weekdays, plus `workflow_dispatch`) compares each gitlink to that remote’s `main`. When a remote moved, it opens **one** PR titled exactly `chore: sync nested pins`. If a PR with that title is already open, the workflow leaves it alone.
+There is no scheduled sync. `.github/workflows/sync-nested-pins.yml` (weekday UTC cron plus `workflow_dispatch`) failed on every run from 2026-10-02 and was removed. Nested pins are updated by hand.
 
-`GITHUB_TOKEN` pull requests do not start other workflows. Set repository secret `UPSTREAM_SYNC_TOKEN` (Factory Plugins bot PAT with `contents` + `pull-requests`) so sync PRs still run CI.
-
-Do not merge a sync PR until the pin policy above is satisfied. The workflow records whether each nested `main` is ahead; it does not replace fork CI + smoke.
+Do not merge a pin-bump PR until the pin policy above is satisfied. `scripts/sync-nested-pins.sh` records whether each nested `main` is ahead; it does not replace fork CI + smoke.
 
 ### Manual / agent sync
 
