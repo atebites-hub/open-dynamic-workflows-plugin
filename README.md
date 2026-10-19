@@ -218,7 +218,7 @@ This repo is the Cursor, Grok, Codex, and ZCode marketplace and the plugin.
 ### For maintainers / contributors
 
 The `dist/mcp/server.js` that users run is built from the submodules and committed.
-Nested remotes, pin policy, and the weekday sync workflow are in [UPSTREAM.md](./UPSTREAM.md).
+Nested remotes and pin policy are in [UPSTREAM.md](./UPSTREAM.md).
 After cloning:
 
 ```bash
